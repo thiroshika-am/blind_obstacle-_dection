@@ -1,0 +1,72 @@
+{
+  "# comment": "Smart AI Cap Backend Configuration",
+  "": "",
+  "ai_models": {
+    "yolo_model_path": "yolov5s",
+    "detection_confidence": 0.5,
+    "use_gpu": false,
+    "enable_ocr": true,
+    "ocr_confidence_threshold": 0.3
+  },
+  "": "",
+  "network": {
+    "backend_ip": "0.0.0.0",
+    "backend_port": 5000,
+    "esp32_ip": "192.168.x.x",
+    "esp32_port": 5000,
+    "wifi_timeout": 5.0
+  },
+  "": "",
+  "audio_output": {
+    "tts_engine": "pyttsx3",
+    "voice_speed": 1.0,
+    "voice_language": "en-US",
+    "bluetooth_device": "SmartCap_BLE",
+    "audio_timeout": 10.0
+  },
+  "": "",
+  "vibration": {
+    "enable_haptic": true,
+    "critical_intensity": 255,
+    "warning_intensity": 150,
+    "safe_intensity": 0
+  },
+  "": "",
+  "alert_settings": {
+    "alert_cooldown_ms": 500,
+    "critical_distance_cm": 50,
+    "warning_distance_cm": 100,
+    "max_latency_ms": 500,
+    "enable_duplicate_filter": true
+  },
+  "": "",
+  "performance": {
+    "target_fps": 10,
+    "frame_buffer_size": 10,
+    "detection_batch_size": 1,
+    "enable_gpu_acceleration": false,
+    "max_frame_size": 640,
+    "jpeg_quality": 85
+  },
+  "": "",
+  "power_management": {
+    "enable_eco_mode": false,
+    "eco_mode_threshold_percent": 20,
+    "sleep_timeout_minutes": 10,
+    "thermal_throttling_temp_c": 80
+  },
+  "": "",
+  "logging": {
+    "log_level": "INFO",
+    "log_file": "smartcap.log",
+    "max_log_size_mb": 10,
+    "backup_log_count": 3
+  },
+  "": "",
+  "debug": {
+    "enable_visualization": false,
+    "save_frames": false,
+    "frame_save_path": "./debug_frames/",
+    "verbose_mode": false
+  }
+}
