@@ -261,26 +261,40 @@ class VoiceEngine:
         
         try:
             import asyncio
+            import subprocess
+            import tempfile
+            import os
             
-            async def async_speak():
-                self.is_speaking = True
-                communicate = self.engine.Communicate(text, "en-US-AriaNeural")
-                await communicate.save("temp_speech.mp3")
-                
-                # Play file
-                import subprocess
-                try:
-                    subprocess.run(['ffplay', '-nodisp', '-autoexit', 'temp_speech.mp3'],
-                                  timeout=30)
-                except:
-                    pass
-                
+            self.is_speaking = True
+            communicate = self.engine.Communicate(text, "en-US-AriaNeural")
+            
+            temp_file = "temp_speech.mp3" # Define temp_file
+            
+            try:
+                # Use a new event loop to avoid issues if one is already running
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(communicate.save(temp_file))
+                loop.close()
+            except Exception as e:
+                logger.error(f"Edge TTS save error: {e}")
                 self.is_speaking = False
+                return
             
-            asyncio.run(async_speak())
+            # Play file
+            try:
+                subprocess.run(['ffplay', '-nodisp', '-autoexit', temp_file],
+                              timeout=30)
+            except Exception as e:
+                logger.error(f"Edge TTS play error: {e}")
+            finally:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file) # Clean up temp file
+            
+            self.is_speaking = False
             
         except Exception as e:
-            logger.error(f"Edge TTS error: {e}")
+            logger.error(f"Edge TTS general error: {e}")
             self.is_speaking = False
     
     def _speak_system(self, text):
@@ -288,6 +302,7 @@ class VoiceEngine:
         
         import subprocess
         import sys
+        import os # Added for os.system
         
         try:
             self.is_speaking = True
@@ -297,8 +312,10 @@ class VoiceEngine:
                 subprocess.run(['espeak', '-s', str(int(150 * self.voice_speed)), text])
             elif sys.platform == 'win32':
                 # Windows: PowerShell SAPI
-                ps_cmd = f'Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak("{text}")'
-                subprocess.run(['powershell', '-Command', ps_cmd])
+                # Sanitize text to prevent command injection
+                safe_text = text.replace("'", "''").replace('"', '\\"')
+                cmd = f'PowerShell -Command "Add-Type –AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{safe_text}\');"'
+                os.system(cmd)
             elif sys.platform == 'darwin':
                 # macOS: say command
                 subprocess.run(['say', text])

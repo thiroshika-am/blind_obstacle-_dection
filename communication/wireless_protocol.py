@@ -164,13 +164,26 @@ class WirelessProtocol:
         """
         Receive a single frame from socket
         
-        Returns: (frame_bytes, metadata_dict) or None
+        Returns: (frame_bytes, metadata_dict, frame_type) or None
         """
         
+        def _receive_n_bytes(n):
+            """Helper to receive exactly n bytes"""
+            data = b''
+            while len(data) < n:
+                try:
+                    chunk = sock.recv(n - len(data))
+                    if not chunk:
+                        return None
+                    data += chunk
+                except Exception:
+                    return None
+            return data
+
         try:
             # Read header (4 + 1 + 1 + 4 = 10 bytes)
-            header = sock.recv(10)
-            if len(header) < 10:
+            header = _receive_n_bytes(10)
+            if not header:
                 return None
             
             magic, version, frame_type, length = struct.unpack('<4sBBI', header)
@@ -183,22 +196,26 @@ class WirelessProtocol:
             logger.debug(f"Frame type: 0x{frame_type:02x}, Length: {length}")
             
             # Read metadata (JSON)
-            metadata_len = struct.unpack('<I', sock.recv(4))[0]
-            metadata_json = sock.recv(metadata_len).decode('utf-8')
+            len_bytes = _receive_n_bytes(4)
+            if not len_bytes: return None
+            metadata_len = struct.unpack('<I', len_bytes)[0]
+            
+            metadata_bytes = _receive_n_bytes(metadata_len)
+            if not metadata_bytes: return None
+            metadata_json = metadata_bytes.decode('utf-8')
             metadata = json.loads(metadata_json)
             
             # Read payload
             payload = b''
             remaining = length - metadata_len - 4
-            while remaining > 0:
-                chunk = sock.recv(min(4096, remaining))
-                if not chunk:
-                    return None
-                payload += chunk
-                remaining -= len(chunk)
+            if remaining > 0:
+                payload = _receive_n_bytes(remaining)
+                if not payload: return None
             
             # Read checksum
-            checksum = struct.unpack('<I', sock.recv(4))[0]
+            checksum_bytes = _receive_n_bytes(4)
+            if not checksum_bytes: return None
+            checksum = struct.unpack('<I', checksum_bytes)[0]
             
             # Verify checksum (CRC32)
             import zlib
@@ -275,13 +292,21 @@ class WirelessProtocol:
             metadata_json = json.dumps(metadata).encode()
             
             # Build header
-            length = len(metadata_json) + 4 + len(payload)
-            header = struct.pack('<4sIBBI',
+            # The total length of the frame payload (metadata_len + metadata_json + payload)
+            # The receiver expects length to be (metadata_len + metadata_json_bytes + payload_bytes)
+            # metadata_len is 4 bytes (I)
+            # metadata_json_bytes is len(metadata_json)
+            # payload_bytes is len(payload)
+            # So, length = 4 + len(metadata_json) + len(payload)
+            length = 4 + len(metadata_json) + len(payload)
+            
+            # Format: [MAGIC][VER][TYPE][LEN]
+            # <4s B B I
+            header = struct.pack('<4sBBI',
                                 ProtocolFormat.MAGIC_BYTES,
                                 ProtocolFormat.VERSION,
-                                ProtocolFormat.FRAME_COMMAND,
-                                length,
-                                len(metadata_json)
+                                ProtocolFormat.FRAME_COMMAND, # This is the frame type for commands
+                                length
             )
             
             # Calculate checksum

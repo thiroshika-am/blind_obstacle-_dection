@@ -13,7 +13,13 @@ Patterns:
 import logging
 import time
 import threading
-import serial
+try:
+    import serial
+except ImportError:
+    serial = None
+    import warnings
+    warnings.warn("pyserial not installed. Serial communication will be disabled.")
+
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,13 @@ try:
     PYQT_BLUETOOTH_AVAILABLE = True
 except ImportError:
     PYQT_BLUETOOTH_AVAILABLE = False
+
+
+class AlertLevel:
+    SAFE = 0
+    WARNING = 1
+    CRITICAL = 2
+
 
 
 class VibrationController:

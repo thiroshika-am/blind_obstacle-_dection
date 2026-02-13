@@ -38,8 +38,7 @@ from ai_modules.ocr_engine import TextRecognizer
 from ai_modules.voice_output import VoiceEngine
 from ai_modules.vibration_control import VibrationController
 from communication.wireless_protocol import WirelessProtocol
-from utils.config_loader import ConfigLoader
-from utils.frame_buffer import FrameBuffer
+from utils.config_loader import ConfigLoader, FrameBuffer, PerformanceMonitor
 
 # ============================================
 # CONFIGURATION & CONSTANTS
@@ -457,10 +456,11 @@ class SmartCapBackend:
             pass
         
         # Close connections
-        try:
-            self.wireless.close()
-        except:
-            pass
+        if self.wireless:
+            try:
+                self.wireless.shutdown()
+            except Exception as e:
+                logger.error(f"Error shutting down wireless: {e}")
         
         logger.info("Backend shutdown complete")
     

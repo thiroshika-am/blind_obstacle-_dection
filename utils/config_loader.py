@@ -70,14 +70,34 @@ class ConfigLoader:
         }
     
     def get(self, key, default=None):
-        """Get configuration value with fallback"""
-        
+        """
+        Get config value by key.
+        Supports fetching nested keys via recursive search if not found at top level.
+        """
+        # 1. Try direct access
         if key in self.config:
             return self.config[key]
-        elif default is not None:
+            
+        # 2. Try recursive search for the key in nested dictionaries
+        val = self._find_recursive(key, self.config)
+        if val is not None:
+            return val
+            
+        # 3. Return default
+        if default is not None:
             return default
-        else:
-            return self.defaults.get(key)
+        return self.defaults.get(key)
+
+    def _find_recursive(self, key, config_dict):
+        """Helper to search for a key in nested dictionaries"""
+        for k, v in config_dict.items():
+            if k == key:
+                return v
+            if isinstance(v, dict):
+                found = self._find_recursive(key, v)
+                if found is not None:
+                    return found
+        return None
     
     def save(self, output_path=None):
         """Save configuration to file"""

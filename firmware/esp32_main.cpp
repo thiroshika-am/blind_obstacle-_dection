@@ -29,9 +29,9 @@
 // ============================================
 // PIN DEFINITIONS
 // ============================================
-#define TRIGGER_PIN   5    // Ultrasonic TRIGGER
-#define ECHO_PIN      19   // Ultrasonic ECHO
-#define VIBRO_PIN     27   // Vibration motor PWM
+#define TRIGGER_PIN   12   // Changed from 5 (Camera Y2)
+#define ECHO_PIN      13   // Changed from 19 (Camera Y4)
+#define VIBRO_PIN     14   // Changed from 27 (Camera SIOC)
 #define STATUS_LED    33   // Status indicator LED
 
 // ESP32-CAM specific pins (internal)
@@ -169,8 +169,49 @@ void loop() {
     // Note: Full transmission to backend happens here
     // In a real system, you'd stream this over WiFi to Python backend
     
-    Serial.printf("Distance: %lumm | Frame size: %u bytes\n", 
-                  distance, fb->len);
+    // Connect to backend if not connected
+    WiFiClient client;
+    if (client.connect(BACKEND_IP, BACKEND_PORT)) {
+        // Build packet: [MAGIC][VER][TYPE][LEN][METADATA_LEN][METADATA][PAYLOAD]
+        // Simplified for this example: Just sending raw JPEG with header
+        
+        // 1. Send Header (Custom Protocol)
+        // Magic: "CAP1", Ver: 1, Type: 1 (Frame), Len: fb->len
+        uint8_t header[10];
+        memcpy(header, "CAP1", 4);
+        header[4] = 1; // Version
+        header[5] = 1; // Type = Frame
+        uint32_t len = fb->len;
+        memcpy(&header[6], &len, 4);
+        
+        client.write(header, 10);
+        
+        // 2. Send Metadata (zero length for now, or could send distance)
+        // For simplicity, we stick to the basic frame structure expected by backend
+        // Backend expects: Header (10) + Metadata Len (4) + Metadata + Payload
+        
+        uint32_t metaLen = 0; // No metadata for now to keep it simple, or JSON string length
+        // Let's create simple metadata JSON
+        String meta = "{\"dist\":" + String(distance) + "}";
+        metaLen = meta.length();
+        
+        client.write((const uint8_t*)&metaLen, 4);
+        client.print(meta);
+        
+        // 3. Send Frame Data
+        size_t sent = 0;
+        size_t toSend = fb->len;
+        while (sent < toSend) {
+            size_t chunk = (toSend - sent > 1024) ? 1024 : (toSend - sent);
+            client.write(fb->buf + sent, chunk);
+            sent += chunk;
+        }
+        
+        Serial.printf("Sent frame (%u bytes) + meta to backend\n", fb->len);
+        client.stop();
+    } else {
+        Serial.println("Connection to backend failed");
+    }
     
     // Return frame buffer
     esp_camera_fb_return(fb);
