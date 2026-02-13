@@ -81,8 +81,12 @@ class SmartCapBackend:
     4. Controls wireless output (audio, vibration)
     """
     
-    def __init__(self, config_path="config/backend_config.json"):
+    def __init__(self, config_path="config/backend_config.json", video_source=None):
         """Initialize the backend system"""
+        
+        self.video_source = video_source
+        self.visualize = video_source is not None
+
         
         logger.info("=" * 50)
         logger.info("Smart AI Cap Backend Starting...")
@@ -139,6 +143,10 @@ class SmartCapBackend:
         logger.info(f"  - Detection model: {self.config.get('yolo_model_path')}")
         logger.info(f"  - GPU acceleration: {self.config.get('use_gpu', False)}")
         logger.info(f"  - Bluetooth device: {self.config.get('bluetooth_device')}")
+        self.cap = None
+        if self.video_source is not None:
+            logger.info(f"  - Video Source: WEBCAM ({self.video_source})")
+
         
     def start(self):
         """Start the backend processing engine"""
@@ -147,11 +155,25 @@ class SmartCapBackend:
         logger.info("Starting backend listening...")
         
         # Start wireless receiver in separate thread
-        receiver_thread = threading.Thread(
-            target=self._receive_frame_thread,
-            daemon=True
-        )
+        # Start receiver thread (Wireless or Webcam)
+        if self.video_source is not None:
+            self.cap = cv2.VideoCapture(self.video_source)
+            if not self.cap.isOpened():
+                logger.error(f"Cannot open video source: {self.video_source}")
+                self.is_running = False
+                return
+
+            receiver_thread = threading.Thread(
+                target=self._receive_webcam_thread,
+                daemon=True
+            )
+        else:
+            receiver_thread = threading.Thread(
+                target=self._receive_frame_thread,
+                daemon=True
+            )
         receiver_thread.start()
+
         
         # Main processing loop
         try:
@@ -164,10 +186,36 @@ class SmartCapBackend:
         finally:
             self.shutdown()
     
+    def _receive_webcam_thread(self):
+        """Background thread for receiving frames from local webcam"""
+        logger.info(f"Webcam receiver thread started (Source: {self.video_source})")
+        
+        while self.is_running:
+            try:
+                ret, frame = self.cap.read()
+                if ret:
+                    # Mock metadata for local testing
+                    metadata = {
+                        'timestamp': time.time(),
+                        'distance': 0, # No distance sensor
+                        'frame_id': int(time.time() * 1000)
+                    }
+                    self.frame_buffer.add_frame(frame, metadata)
+                else:
+                    logger.warning("Failed to read from webcam")
+                    time.sleep(1)
+                
+                # Limit frame rate to ~30fps
+                time.sleep(0.03)
+                    
+            except Exception as e:
+                logger.error(f"Webcam error: {e}")
+                time.sleep(1)
+
     def _receive_frame_thread(self):
         """Background thread for receiving frames from ESP32"""
         
-        logger.info("Frame receiver thread started")
+        logger.info("Wireless frame receiver thread started")
         
         while self.is_running:
             try:
@@ -188,6 +236,7 @@ class SmartCapBackend:
             except Exception as e:
                 logger.error(f"Frame reception error: {e}")
                 time.sleep(0.5)
+
     
     def _process_next_frame(self):
         """Process the next frame in the buffer"""
@@ -268,8 +317,19 @@ class SmartCapBackend:
             logger.info(f"Stats: "
                        f"Frames={self.processing_stats['frames_processed']}, "
                        f"Latency={self.processing_stats['avg_latency_ms']:.1f}ms, "
-                       f"Detections={self.processing_stats['detections_made']}"
             )
+        
+        # Visualization (if enabled)
+        if self.visualize:
+            vis_frame = self.object_detector.visualize(frame, detections)
+            
+            # Add status text
+            status = f"Latency: {self.processing_stats['avg_latency_ms']:.0f}ms | {alert['message'] if alert else 'Scanning...'}"
+            cv2.putText(vis_frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            cv2.imshow("Smart AI Cap - Live Feed", vis_frame)
+            cv2.waitKey(1)
+
     
     def _check_obstacles(self, distance_mm, detections):
         """
@@ -454,6 +514,12 @@ class SmartCapBackend:
             self.voice_engine.stop()
         except:
             pass
+            
+        if self.visualize:
+            cv2.destroyAllWindows()
+            if hasattr(self, 'cap'):
+                self.cap.release()
+
         
         # Close connections
         if self.wireless:

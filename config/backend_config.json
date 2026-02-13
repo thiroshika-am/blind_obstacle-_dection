@@ -2,9 +2,9 @@
   "# comment": "Smart AI Cap Backend Configuration",
   "": "",
   "ai_models": {
-    "yolo_model_path": "yolov5s",
+    "yolo_model_path": "yolov5su_openvino_model/",
     "detection_confidence": 0.5,
-    "use_gpu": false,
+    "use_gpu": true,
     "enable_ocr": true,
     "ocr_confidence_threshold": 0.3
   },

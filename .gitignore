@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.pt
+*.bin
+yolov5su_openvino_model/
+smartcap.log

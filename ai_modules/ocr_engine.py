@@ -118,18 +118,23 @@ class TextRecognizer:
                 bbox, text, confidence = detection
                 
                 if confidence >= conf_threshold:
-                    # bbox is list of 4 corner points
-                    x_coords = [p[0] for p in bbox]
-                    y_coords = [p[1] for p in bbox]
+                    # EasyOCR returns bbox as a list of 4 [x, y] points
+                    # e.g. [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+                    
+                    # Convert float coordinates to integers
+                    bbox_int = [[int(p[0]), int(p[1])] for p in bbox]
+                    
+                    x_coords = [p[0] for p in bbox_int]
+                    y_coords = [p[1] for p in bbox_int]
                     
                     text_detections.append({
                         'text': text,
                         'confidence': float(confidence),
-                        'bbox': bbox,  # 4 corner points
-                        'x1': int(min(x_coords)),
-                        'y1': int(min(y_coords)),
-                        'x2': int(max(x_coords)),
-                        'y2': int(max(y_coords))
+                        'bbox': bbox_int,  # 4 corner points as integers
+                        'x1': min(x_coords),
+                        'y1': min(y_coords),
+                        'x2': max(x_coords),
+                        'y2': max(y_coords)
                     })
             
             elapsed = (time.time() - start) * 1000
