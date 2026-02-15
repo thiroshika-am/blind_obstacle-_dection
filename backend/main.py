@@ -10,8 +10,8 @@ import json
 import time
 import logging
 import threading
-from datetime import datetime
-from flask import Flask, Response, jsonify, send_from_directory, request
+from datetime import datetime, timezone
+from flask import Flask, Response, jsonify, send_from_directory, request, abort
 from flask_cors import CORS
 import requests
 
@@ -51,7 +51,7 @@ gps_data = {
     "accuracy": 0,
     "speed": 0,
     "altitude": 0,
-    "timestamp": datetime.utcnow().isoformat(),
+    "timestamp": datetime.now(timezone.utc).isoformat(),
     "source": "placeholder",
 }
 
@@ -88,6 +88,9 @@ def serve_index():
 
 @app.route("/<path:path>")
 def serve_static(path):
+    # Don't serve /api/* as static files — let Flask handle those routes
+    if path.startswith("api/"):
+        abort(404)
     return send_from_directory(FRONTEND_DIR, path)
 
 
@@ -101,13 +104,12 @@ def stream_proxy():
     """
     def generate():
         try:
-            resp = requests.get(ESP32_STREAM_URL, stream=True, timeout=10)
+            resp = requests.get(ESP32_STREAM_URL, stream=True, timeout=(3, 10))
             for chunk in resp.iter_content(chunk_size=4096):
                 yield chunk
         except requests.exceptions.RequestException as e:
             logger.warning(f"ESP32 stream unavailable: {e}")
-            # Return a single JPEG placeholder frame
-            yield b""
+            return
 
     return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
@@ -134,7 +136,7 @@ def update_gps():
         gps_data["accuracy"] = data.get("accuracy", 0)
         gps_data["speed"] = data.get("speed", 0)
         gps_data["altitude"] = data.get("altitude", 0)
-        gps_data["timestamp"] = datetime.utcnow().isoformat()
+        gps_data["timestamp"] = datetime.now(timezone.utc).isoformat()
         gps_data["source"] = "esp32"
     logger.info(f"GPS updated: {gps_data['latitude']}, {gps_data['longitude']}")
     return jsonify({"status": "ok"})
@@ -158,7 +160,7 @@ def update_status():
     data = request.get_json(force=True)
     with status_lock:
         device_status["online"] = True
-        device_status["last_seen"] = datetime.utcnow().isoformat()
+        device_status["last_seen"] = datetime.now(timezone.utc).isoformat()
         device_status["battery"] = data.get("battery")
         device_status["wifi_rssi"] = data.get("wifi_rssi")
         device_status["distance_mm"] = data.get("distance_mm")
@@ -183,7 +185,7 @@ def get_distance():
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
+    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
 
 
 # ============================================
@@ -197,7 +199,11 @@ def device_watchdog():
         with status_lock:
             if device_status["last_seen"]:
                 last = datetime.fromisoformat(device_status["last_seen"])
-                delta = (datetime.utcnow() - last).total_seconds()
+                now = datetime.now(timezone.utc)
+                # Ensure both are timezone-aware for comparison
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                delta = (now - last).total_seconds()
                 if delta > 30:
                     device_status["online"] = False
 
