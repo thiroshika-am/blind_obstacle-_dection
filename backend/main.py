@@ -1,538 +1,205 @@
 """
 ==========================================
-SMART AI CAP - PYTHON BACKEND
-Main processing engine for image analysis and decision making
+SMART AI CAP — Backend Server
+Serves the frontend, proxies ESP32-CAM stream, and handles GPS data
 ==========================================
-
-Features:
-  - Real-time image reception from ESP32
-  - Object detection using YOLO
-  - Text recognition using OCR
-  - Priority-based alert generation
-  - Wireless transmission of commands
-  - Error handling and graceful degradation
-
-Requirements:
-  pip install opencv-python
-  pip install torch torchvision
-  pip install yolov5  OR ultralytics
-  pip install easyocr
-  pip install pyttsx3
-  pip install pybluetoothctl
 """
 
-import cv2
-import numpy as np
-import socket
-import threading
-import time
+import os
 import json
+import time
 import logging
+import threading
 from datetime import datetime
-from collections import deque
-import sys
-
-# AI Modules (import separately)
-from ai_modules.object_detection import ObjectDetector
-from ai_modules.ocr_engine import TextRecognizer
-from ai_modules.voice_output import VoiceEngine
-from ai_modules.vibration_control import VibrationController
-from communication.wireless_protocol import WirelessProtocol
-from utils.config_loader import ConfigLoader, FrameBuffer, PerformanceMonitor
+from flask import Flask, Response, jsonify, send_from_directory, request
+from flask_cors import CORS
+import requests
 
 # ============================================
-# CONFIGURATION & CONSTANTS
+# CONFIGURATION
 # ============================================
 
-# Logging setup
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "backend_config.json")
+
+with open(CONFIG_PATH, "r") as f:
+    config = json.load(f)
+
+ESP32_STREAM_URL = config.get("esp32", {}).get("stream_url", "http://192.168.1.100:80/stream")
+ESP32_STATUS_URL = config.get("esp32", {}).get("status_url", "http://192.168.1.100:80/status")
+ESP32_DISTANCE_URL = config.get("esp32", {}).get("distance_url", "http://192.168.1.100:80/distance")
+BACKEND_PORT = config.get("network", {}).get("backend_port", 5000)
+
+# ============================================
+# LOGGING
+# ============================================
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('smartcap.log'),
-        logging.StreamHandler()
-    ]
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()],
 )
-logger = logging.getLogger(__name__)
-
-# Alert priority levels
-class AlertLevel:
-    SAFE = 0
-    WARNING = 1
-    CRITICAL = 2
-
-# Alert categories
-class AlertCategory:
-    OBSTACLE = "obstacle"
-    MOVING_OBJECT = "moving_object"
-    TEXT = "text"
-    OBJECT = "object"
+logger = logging.getLogger("smartcap")
 
 # ============================================
-# MAIN BACKEND ENGINE
+# IN-MEMORY STATE
 # ============================================
 
-class SmartCapBackend:
+# Latest GPS data received from ESP32
+gps_data = {
+    "latitude": 12.9716,    # Default: Bangalore, India (placeholder)
+    "longitude": 77.5946,
+    "accuracy": 0,
+    "speed": 0,
+    "altitude": 0,
+    "timestamp": datetime.utcnow().isoformat(),
+    "source": "placeholder",
+}
+
+# Device status
+device_status = {
+    "online": False,
+    "last_seen": None,
+    "battery": None,
+    "wifi_rssi": None,
+    "distance_mm": None,
+    "alert_level": "SAFE",
+    "uptime": 0,
+}
+
+gps_lock = threading.Lock()
+status_lock = threading.Lock()
+
+# ============================================
+# FLASK APP
+# ============================================
+
+FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+app = Flask(__name__, static_folder=FRONTEND_DIR)
+CORS(app)
+
+
+# --- Serve Frontend ---
+
+@app.route("/")
+def serve_index():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    return send_from_directory(FRONTEND_DIR, path)
+
+
+# --- API: Camera Stream Proxy ---
+
+@app.route("/api/stream")
+def stream_proxy():
     """
-    Main backend processing engine that:
-    1. Receives frames from ESP32
-    2. Runs object detection & OCR
-    3. Generates alerts
-    4. Controls wireless output (audio, vibration)
+    Proxies the ESP32-CAM MJPEG stream to the frontend.
+    The ESP32 serves an MJPEG stream at /stream.
     """
-    
-    def __init__(self, config_path="config/backend_config.json", video_source=None):
-        """Initialize the backend system"""
-        
-        self.video_source = video_source
-        self.visualize = video_source is not None
-
-        
-        logger.info("=" * 50)
-        logger.info("Smart AI Cap Backend Starting...")
-        logger.info("=" * 50)
-        
-        # Load configuration
-        self.config = ConfigLoader(config_path)
-        
-        # Initialize modules
-        self.object_detector = ObjectDetector(
-            model_path=self.config.get("yolo_model_path"),
-            confidence_threshold=self.config.get("detection_confidence", 0.5)
-        )
-        
-        self.text_recognizer = TextRecognizer(
-            languages=['en'],
-            device='cuda' if self.config.get("use_gpu", False) else 'cpu'
-        )
-        
-        self.voice_engine = VoiceEngine(
-            tts_engine=self.config.get("tts_engine", "pyttsx3"),
-            voice_speed=self.config.get("voice_speed", 1.0)
-        )
-        
-        self.vibration_controller = VibrationController(
-            bluetooth_device=self.config.get("bluetooth_device", "SmartCap_BLE")
-        )
-        
-        self.wireless = WirelessProtocol(
-            backend_ip=self.config.get("backend_ip", "0.0.0.0"),
-            backend_port=self.config.get("backend_port", 5000),
-            esp32_ip=self.config.get("esp32_ip", ""),
-        )
-        
-        # Frame buffering
-        self.frame_buffer = FrameBuffer(max_size=10)
-        
-        # Tracking variables
-        self.current_alert_level = AlertLevel.SAFE
-        self.last_alert_time = 0
-        self.alert_cooldown = self.config.get("alert_cooldown", 500)  # ms
-        self.is_running = False
-        self.processing_stats = {
-            'frames_processed': 0,
-            'detections_made': 0,
-            'ocr_recognitions': 0,
-            'avg_latency_ms': 0
-        }
-        
-        # Alert history for filtering duplicates
-        self.recent_alerts = deque(maxlen=5)
-        
-        logger.info("✓ Backend initialized successfully")
-        logger.info(f"  - Detection model: {self.config.get('yolo_model_path')}")
-        logger.info(f"  - GPU acceleration: {self.config.get('use_gpu', False)}")
-        logger.info(f"  - Bluetooth device: {self.config.get('bluetooth_device')}")
-        self.cap = None
-        if self.video_source is not None:
-            logger.info(f"  - Video Source: WEBCAM ({self.video_source})")
-
-        
-    def start(self):
-        """Start the backend processing engine"""
-        
-        self.is_running = True
-        logger.info("Starting backend listening...")
-        
-        # Start wireless receiver in separate thread
-        # Start receiver thread (Wireless or Webcam)
-        if self.video_source is not None:
-            self.cap = cv2.VideoCapture(self.video_source)
-            if not self.cap.isOpened():
-                logger.error(f"Cannot open video source: {self.video_source}")
-                self.is_running = False
-                return
-
-            receiver_thread = threading.Thread(
-                target=self._receive_webcam_thread,
-                daemon=True
-            )
-        else:
-            receiver_thread = threading.Thread(
-                target=self._receive_frame_thread,
-                daemon=True
-            )
-        receiver_thread.start()
-
-        
-        # Main processing loop
+    def generate():
         try:
-            while self.is_running:
-                self._process_next_frame()
-                time.sleep(0.01)  # 100Hz processing loop
-                
-        except KeyboardInterrupt:
-            logger.info("Shutdown signal received")
-        finally:
-            self.shutdown()
-    
-    def _receive_webcam_thread(self):
-        """Background thread for receiving frames from local webcam"""
-        logger.info(f"Webcam receiver thread started (Source: {self.video_source})")
-        
-        while self.is_running:
-            try:
-                ret, frame = self.cap.read()
-                if ret:
-                    # Mock metadata for local testing
-                    metadata = {
-                        'timestamp': time.time(),
-                        'distance': 0, # No distance sensor
-                        'frame_id': int(time.time() * 1000)
-                    }
-                    self.frame_buffer.add_frame(frame, metadata)
-                else:
-                    logger.warning("Failed to read from webcam")
-                    time.sleep(1)
-                
-                # Limit frame rate to ~30fps
-                time.sleep(0.03)
-                    
-            except Exception as e:
-                logger.error(f"Webcam error: {e}")
-                time.sleep(1)
+            resp = requests.get(ESP32_STREAM_URL, stream=True, timeout=10)
+            for chunk in resp.iter_content(chunk_size=4096):
+                yield chunk
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"ESP32 stream unavailable: {e}")
+            # Return a single JPEG placeholder frame
+            yield b""
 
-    def _receive_frame_thread(self):
-        """Background thread for receiving frames from ESP32"""
-        
-        logger.info("Wireless frame receiver thread started")
-        
-        while self.is_running:
-            try:
-                # Wait for frame from wireless
-                frame_data = self.wireless.receive_frame(timeout=2.0)
-                
-                if frame_data is not None:
-                    # Decode frame
-                    frame = cv2.imdecode(frame_data, cv2.IMREAD_COLOR)
-                    metadata = self.wireless.get_metadata()
-                    
-                    # Add to buffer
-                    self.frame_buffer.add_frame(frame, metadata)
-                    
-            except socket.timeout:
-                # No frame received - acceptable
-                pass
-            except Exception as e:
-                logger.error(f"Frame reception error: {e}")
-                time.sleep(0.5)
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
-    
-    def _process_next_frame(self):
-        """Process the next frame in the buffer"""
-        
-        # Check if frame is available
-        if not self.frame_buffer.has_frame():
-            return
-        
-        frame, metadata = self.frame_buffer.get_frame()
-        if frame is None:
-            return
-        
-        # Start timer for latency measurement
-        start_time = time.time()
-        
-        # Extract metadata
-        distance_mm = metadata.get('distance', 0)
-        frame_id = metadata.get('frame_id', 0)
-        timestamp = metadata.get('timestamp', 0)
-        
-        # ==========================================
-        # STEP 1: OBJECT DETECTION
-        # ==========================================
-        
-        detections = self.object_detector.detect(frame)
-        self.processing_stats['detections_made'] += len(detections)
-        
-        logger.debug(f"Frame {frame_id}: {len(detections)} objects detected")
-        
-        # ==========================================
-        # STEP 2: OBSTACLE ANALYSIS (from distance sensor)
-        # ==========================================
-        
-        obstacle_alert = self._check_obstacles(distance_mm, detections)
-        
-        # ==========================================
-        # STEP 3: TEXT RECOGNITION (if needed)
-        # ==========================================
-        
-        text_detections = []
-        if self.config.get("enable_ocr", True):
-            # Only run OCR if text-like objects detected
-            if self._should_run_ocr(detections):
-                text_detections = self.text_recognizer.recognize(frame)
-                self.processing_stats['ocr_recognitions'] += len(text_detections)
-                logger.debug(f"OCR: Found {len(text_detections)} text regions")
-        
-        # ==========================================
-        # STEP 4: PRIORITY-BASED DECISION MAKING
-        # ==========================================
-        
-        alert = self._make_decision(
-            detections, 
-            text_detections, 
-            obstacle_alert, 
-            distance_mm
-        )
-        
-        # ==========================================
-        # STEP 5: GENERATE OUTPUT (Audio + Haptic)
-        # ==========================================
-        
-        if alert is not None:
-            self._execute_alert(alert)
-        
-        # ==========================================
-        # TELEMETRY & LOGGING
-        # ==========================================
-        
-        latency_ms = (time.time() - start_time) * 1000
-        self.processing_stats['frames_processed'] += 1
-        self.processing_stats['avg_latency_ms'] = (
-            0.9 * self.processing_stats['avg_latency_ms'] + 
-            0.1 * latency_ms
-        )
-        
-        if self.processing_stats['frames_processed'] % 30 == 0:
-            logger.info(f"Stats: "
-                       f"Frames={self.processing_stats['frames_processed']}, "
-                       f"Latency={self.processing_stats['avg_latency_ms']:.1f}ms, "
-            )
-        
-        # Visualization (if enabled)
-        if self.visualize:
-            vis_frame = self.object_detector.visualize(frame, detections)
-            
-            # Add status text
-            status = f"Latency: {self.processing_stats['avg_latency_ms']:.0f}ms | {alert['message'] if alert else 'Scanning...'}"
-            cv2.putText(vis_frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            
-            cv2.imshow("Smart AI Cap - Live Feed", vis_frame)
-            cv2.waitKey(1)
 
-    
-    def _check_obstacles(self, distance_mm, detections):
-        """
-        Analyze distance sensor and object detection for obstacles
-        
-        Returns: Alert dict if obstacle detected, None otherwise
-        """
-        
-        if distance_mm <= 0:
-            return None  # No valid reading
-        
-        distance_cm = distance_mm / 10.0
-        
-        # Define danger zones
-        CRITICAL_DISTANCE_CM = 50   # < 50cm = CRITICAL
-        WARNING_DISTANCE_CM = 100   # < 100cm = WARNING
-        
-        if distance_cm < CRITICAL_DISTANCE_CM:
-            # Check if it's actually an obstacle (not just clutter)
-            has_obstacle = any(
-                det['class'] in ['person', 'car', 'truck', 'bicycle', 'chair', 'door']
-                for det in detections
-            )
-            
-            if has_obstacle or distance_cm < 30:
-                return {
-                    'category': AlertCategory.OBSTACLE,
-                    'level': AlertLevel.CRITICAL,
-                    'distance_cm': distance_cm,
-                    'message': f"CRITICAL: Obstacle {distance_cm:.0f}cm ahead"
-                }
-        
-        elif distance_cm < WARNING_DISTANCE_CM:
-            return {
-                'category': AlertCategory.OBSTACLE,
-                'level': AlertLevel.WARNING,
-                'distance_cm': distance_cm,
-                'message': f"Warning: Object {distance_cm:.0f}cm ahead"
-            }
-        
-        return None
-    
-    def _should_run_ocr(self, detections):
-        """
-        Decide whether to run expensive OCR processing
-        
-        Only run if:
-        - Text-like objects detected, OR
-        - High-value region of interest exists
-        """
-        
-        ocr_triggers = ['text', 'sign', 'label', 'book', 'screen']
-        
-        for detection in detections:
-            if detection['class'].lower() in ocr_triggers:
-                return True
-        
-        # Also run if confidence is high for book/document-like objects
-        for detection in detections:
-            if (detection['class'] in ['backpack', 'book'] and 
-                detection['confidence'] > 0.8):
-                return True
-        
-        return False
-    
-    def _make_decision(self, detections, text_detections, obstacle_alert, distance_mm):
-        """
-        Priority-based decision engine:
-        1. CRITICAL obstacles override everything
-        2. Moving objects (high threat)
-        3. Text/signage (informational)
-        4. Other objects (low priority)
-        """
-        
-        # Priority 1: Critical obstacles
-        if obstacle_alert and obstacle_alert['level'] == AlertLevel.CRITICAL:
-            return obstacle_alert
-        
-        # Priority 2: Moving objects (rough detection based on image features)
-        moving_objects = [d for d in detections 
-                         if d['class'] in ['person', 'car', 'truck']]
-        if moving_objects:
-            obj = moving_objects[0]
-            return {
-                'category': AlertCategory.MOVING_OBJECT,
-                'level': AlertLevel.WARNING,
-                'object': obj['class'],
-                'confidence': obj['confidence'],
-                'message': f"{obj['class'].capitalize()} detected"
-            }
-        
-        # Priority 3: Text/Signage
-        if text_detections:
-            text = text_detections[0].get('text', 'sign')
-            return {
-                'category': AlertCategory.TEXT,
-                'level': AlertLevel.SAFE,
-                'text': text,
-                'message': f"Sign: {text}"
-            }
-        
-        # Priority 4: Regular object detection
-        high_conf_objects = [d for d in detections 
-                            if d['confidence'] > self.config.get("detection_confidence")]
-        if high_conf_objects:
-            obj = high_conf_objects[0]
-            return {
-                'category': AlertCategory.OBJECT,
-                'level': AlertLevel.SAFE,
-                'object': obj['class'],
-                'confidence': obj['confidence'],
-                'message': f"Object: {obj['class']}"
-            }
-        
-        # Priority 5: Warning obstacles
-        if obstacle_alert:
-            return obstacle_alert
-        
-        # No alert
-        return None
-    
-    def _execute_alert(self, alert):
-        """
-        Execute alert output:
-        1. Speaker output (text-to-speech)
-        2. Vibration pattern
-        """
-        
-        # Check cooldown to avoid alert spam
-        current_time = time.time() * 1000  # Convert to ms
-        if current_time - self.last_alert_time < self.alert_cooldown:
-            return
-        
-        # Check for duplicate alerts in recent history
-        alert_key = (alert['category'], alert.get('message', ''))
-        if alert_key in self.recent_alerts:
-            return
-        
-        self.last_alert_time = current_time
-        self.recent_alerts.append(alert_key)
-        
-        message = alert.get('message', 'Alert')
-        level = alert.get('level', AlertLevel.SAFE)
-        
-        logger.info(f"ALERT [{level}]: {message}")
-        
-        # ==========================================
-        # TEXT-TO-SPEECH OUTPUT
-        # ==========================================
-        
-        try:
-            self.voice_engine.speak(message)
-        except Exception as e:
-            logger.error(f"Voice output failed: {e}")
-        
-        # ==========================================
-        # VIBRATION FEEDBACK
-        # ==========================================
-        
-        try:
-            self.vibration_controller.vibrate_alert(level)
-        except Exception as e:
-            logger.error(f"Vibration control failed: {e}")
-        
-        # Update current alert level
-        self.current_alert_level = level
-    
-    def shutdown(self):
-        """Graceful shutdown"""
-        
-        logger.info("Shutting down backend...")
-        self.is_running = False
-        
-        # Stop vibrations
-        try:
-            self.vibration_controller.vibrate(0)
-        except:
-            pass
-        
-        # Stop audio
-        try:
-            self.voice_engine.stop()
-        except:
-            pass
-            
-        if self.visualize:
-            cv2.destroyAllWindows()
-            if hasattr(self, 'cap'):
-                self.cap.release()
+# --- API: GPS Data ---
 
-        
-        # Close connections
-        if self.wireless:
-            try:
-                self.wireless.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down wireless: {e}")
-        
-        logger.info("Backend shutdown complete")
-    
-    def get_stats(self):
-        """Return processing statistics"""
-        return self.processing_stats.copy()
+@app.route("/api/gps", methods=["GET"])
+def get_gps():
+    """Return latest GPS coordinates."""
+    with gps_lock:
+        return jsonify(gps_data)
+
+
+@app.route("/api/gps", methods=["POST"])
+def update_gps():
+    """
+    ESP32 posts GPS data here.
+    Expected JSON: { "latitude": float, "longitude": float, "accuracy": float, ... }
+    """
+    data = request.get_json(force=True)
+    with gps_lock:
+        gps_data["latitude"] = data.get("latitude", gps_data["latitude"])
+        gps_data["longitude"] = data.get("longitude", gps_data["longitude"])
+        gps_data["accuracy"] = data.get("accuracy", 0)
+        gps_data["speed"] = data.get("speed", 0)
+        gps_data["altitude"] = data.get("altitude", 0)
+        gps_data["timestamp"] = datetime.utcnow().isoformat()
+        gps_data["source"] = "esp32"
+    logger.info(f"GPS updated: {gps_data['latitude']}, {gps_data['longitude']}")
+    return jsonify({"status": "ok"})
+
+
+# --- API: Device Status ---
+
+@app.route("/api/status", methods=["GET"])
+def get_status():
+    """Return device status."""
+    with status_lock:
+        return jsonify(device_status)
+
+
+@app.route("/api/status", methods=["POST"])
+def update_status():
+    """
+    ESP32 posts heartbeat/status here.
+    Expected JSON: { "battery": int, "wifi_rssi": int, "distance_mm": int, "alert_level": str, "uptime": int }
+    """
+    data = request.get_json(force=True)
+    with status_lock:
+        device_status["online"] = True
+        device_status["last_seen"] = datetime.utcnow().isoformat()
+        device_status["battery"] = data.get("battery")
+        device_status["wifi_rssi"] = data.get("wifi_rssi")
+        device_status["distance_mm"] = data.get("distance_mm")
+        device_status["alert_level"] = data.get("alert_level", "SAFE")
+        device_status["uptime"] = data.get("uptime", 0)
+    return jsonify({"status": "ok"})
+
+
+# --- API: Distance (proxy to ESP32) ---
+
+@app.route("/api/distance")
+def get_distance():
+    """Proxy distance request to ESP32."""
+    try:
+        resp = requests.get(ESP32_DISTANCE_URL, timeout=3)
+        return jsonify(resp.json())
+    except Exception:
+        return jsonify({"distance_mm": None, "error": "ESP32 unreachable"})
+
+
+# --- Health Check ---
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()})
+
+
+# ============================================
+# BACKGROUND: Device Online Checker
+# ============================================
+
+def device_watchdog():
+    """Marks device as offline if no heartbeat received in 30 seconds."""
+    while True:
+        time.sleep(10)
+        with status_lock:
+            if device_status["last_seen"]:
+                last = datetime.fromisoformat(device_status["last_seen"])
+                delta = (datetime.utcnow() - last).total_seconds()
+                if delta > 30:
+                    device_status["online"] = False
 
 
 # ============================================
@@ -540,24 +207,18 @@ class SmartCapBackend:
 # ============================================
 
 def main():
-    """Main entry point"""
-    
-    print("""
-    ╔════════════════════════════════════════╗
-    ║   SMART AI CAP - BACKEND PROCESSOR     ║
-    ║   Version 1.0 (Engineering-Level)      ║
-    ╚════════════════════════════════════════╝
-    """)
-    
-    # Create backend instance
-    backend = SmartCapBackend("config/backend_config.json")
-    
-    # Start processing
-    try:
-        backend.start()
-    except Exception as e:
-        logger.error(f"Fatal error: {e}", exc_info=True)
-        sys.exit(1)
+    logger.info("=" * 50)
+    logger.info("  SMART AI CAP — Backend Server")
+    logger.info(f"  Frontend: http://localhost:{BACKEND_PORT}")
+    logger.info(f"  ESP32 Stream: {ESP32_STREAM_URL}")
+    logger.info("=" * 50)
+
+    # Start watchdog thread
+    watchdog = threading.Thread(target=device_watchdog, daemon=True)
+    watchdog.start()
+
+    app.run(host="0.0.0.0", port=BACKEND_PORT, debug=False, threaded=True)
+
 
 if __name__ == "__main__":
     main()

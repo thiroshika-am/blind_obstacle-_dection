@@ -2,5 +2,9 @@ __pycache__/
 *.pyc
 *.pt
 *.bin
+*.onnx
 yolov5su_openvino_model/
 smartcap.log
+.venv/
+node_modules/
+.env
