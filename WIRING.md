@@ -2,57 +2,62 @@
 
 This guide details how to wire the components for the Smart AI Cap project based on the current firmware configuration.
 
-## 🧠 Core Component: ESP32-CAM
+## 🧠 Core Component: ESP32-CAM (AI-Thinker)
 
-The project uses the **AI-Thinker ESP32-CAM** module.
+The project uses the **ESP32-CAM** module to handle both vision and sensors.
 
-> **⚠️ PINOUT WARNING:** The ESP32-CAM has limited available pins. We safely use **GPIO 12, 13, 14, and 33** as configured in `firmware/esp32_main.cpp`.
+> **⚠️ PINOUT WARNING:** The ESP32-CAM has limited available pins.  We must use specific pins to avoid conflicts with the camera, SD card, or boot process.
 
 ---
 
-## 📐 Wiring Schematic
+## 📐 Visual Wiring Structure
 
-```mermaid
-graph TD
-    subgraph ESP32-CAM
-        GND[GND]
-        V5[5V / VCC]
-        P12[GPIO 12]
-        P13[GPIO 13]
-        P14[GPIO 14]
-        P33[GPIO 33]
-    end
+```text
+       [ POWER SOURCE (5V) ] 
+               | + (Red)
+               v
+      /------------------\ 
+      |  ESP32-CAM Board | 
+      |                  |
+      |          GND o---+----------------------------------------+-----------------+
+      |                  |                                        |                 |
+      |           5V o---+--------------------+-------------------|-----------------|------+
+      |                  |                    |                   |                 |      |
+      |      GPIO 12 o---|----[ Trig ]        |                   |                 |      |
+      |      GPIO 13 o---|----[ Echo ]        |                   |                 |      |
+      |                  |   (HC-SR04)        |                   |                 |      |
+      |                  |                    |                   |                 |      |
+      |      GPIO 14 o---|--------------------|----[ Signal ]     |                 |      |
+      |                  |                    |    (Vibration)    |                 |      |
+      |                  |                    |                   |                 |      |
+      |       GPIO 2 o---|--------------------|-------------------|----[ OUT ]      |      |
+      |                  |                    |                   |  (IR Sensor)    |      |
+      |                  |                    |                   |                 |      |
+      |      GPIO 16 o---|--------------------|-------------------|-----------------|----[ TX ]
+      |      (U2RX)      |                    |                   |                 |    [ RX ] (Not connected)
+      \------------------/                    |                   |                 |   (GPS Module)
+                                              |                   |                 |
+                                           [ GND ]             [ GND ]           [ GND ]
+```
 
-    subgraph "HC-SR04 (Ultrasonic)"
-        VCC_US[VCC]
-        TRIG[Trig]
-        ECHO[Echo]
-        GND_US[GND]
-    end
+### 📌 Pinout Reference (AI-Thinker Board)
 
-    subgraph "Vibration Motor Module"
-        VCC_VIB[VCC]
-        IN_VIB[Signal / IN]
-        GND_VIB[GND]
-    end
-
-    subgraph "Status LED (Optional)"
-        ANODE[Anode (+)]
-        CATHODE[Cathode (-)]
-    end
-
-    %% Power Connections
-    V5 --> VCC_US
-    V5 --> VCC_VIB
-    GND --> GND_US
-    GND --> GND_VIB
-    GND --> CATHODE
-
-    %% Signal Connections
-    P12 -- Trigger Signal --> TRIG
-    P13 -- Echo Signal --> ECHO
-    P14 -- PWM Control --> IN_VIB
-    P33 -- Status Signal --> ANODE
+```text
+          +--------------------+
+          |      ANTENNA       |
+          |                    |
+          |    [ CAMERA ]      |
+          |                    |
+          |                    |
+   5V  ---| 5V             3V3 |---
+  GND  ---| GND            IO16|--- GPS_TX (Yellow)
+ IO12  ---| IO12           IO0 |--- (Flash Mode: GND)
+ IO13  ---| IO13           IO2 |--- IR_OUT (Green)
+ IO15  ---| IO15           IO4 |--- (Flash LED)
+ IO14  ---| IO14           IO1 |--- (TX0)
+  IO2  ---| IO2            IO3 |--- (RX0)
+          +--------------------+
+             (SD Card Slot)
 ```
 
 ---
@@ -61,42 +66,33 @@ graph TD
 
 | Component | Pin Label | Connection on ESP32-CAM | Description |
 | :--- | :--- | :--- | :--- |
-| **HC-SR04** | VCC | **5V** | Power supply (requires 5V) |
+| **HC-SR04** | VCC | **5V** | Power |
 | | GND | **GND** | Ground |
-| | Trig | **GPIO 12** | Trigger pulse output |
-| | Echo | **GPIO 13** | Echo pulse input |
-| **Vibration Motor** | VCC | **5V / 3.3V** | Motor power (check motor voltage) |
+| | Trig | **GPIO 12** | Trigger Pulse |
+| | Echo | **GPIO 13** | Echo Detection |
+| **IR Sensor** | VCC | **5V / 3.3V** | Power |
 | | GND | **GND** | Ground |
-| | IN / Sig | **GPIO 14** | PWM Control signal |
-| **Status LED** | Anode (+) | **GPIO 33** | Connect via 220Ω resistor |
-| | Cathode (-) | **GND** | Ground |
-| **Power** | 5V | **5V** | Main power input (Battery/USB) |
-| | GND | **GND** | Common ground |
+| | OUT | **GPIO 2** | Obstacle Signal (High/Low) |
+| **Vibration Motor** | VCC | **5V** | Motor Power |
+| | GND | **GND** | Ground |
+| | IN / Sig | **GPIO 14** | PWM Control |
+| **GPS (NEO-6M)** | VCC | **5V / 3.3V** | Power |
+| | GND | **GND** | Ground |
+| | TX | **GPIO 16** (U2RX) | GPS sends data to ESP32 |
+| | RX | **Not Connected** | ESP32 doesn't need to write to GPS |
 
-### ⚡ Powering the System
-* **Input Voltage:** Connect a 5V source (like a USB power bank or 5V regulator) to the **5V** and **GND** pins.
-* **Current:** The ESP32-CAM + WiFi + Sensors can draw peaks of **>300mA**. Ensure your power source provides at least **1A**.
+### ⚠️ Critical Notes
+1. **GPIO 0**: Must be connected to **GND** only when flashing firmware. Disconnect to run.
+2. **GPIO 2** (IR Sensor): This pin is also the on-board LED. It might flash during boot. Ensure the IR sensor doesn't pull it strongly to Ground during boot, or flashing might fail.
+3. **Power**: The ESP32-CAM consumes a lot of power. Use a **separate 5V regulator** (like LM7805 or a power bank), do not power everything from a laptop USB port if possible.
 
 ---
 
-## 🛠️ Flashing Mode Wiring (FTDI Adapter)
+## 🔧 Dual-Board Option (Alternative)
 
-To upload code, you need a USB-to-TTL (FTDI) adapter.
+If you have a separate **standard ESP32 Dev Board** ("ESP32 S") in addition to the ESP32-CAM:
 
-| FTDI Adapter | ESP32-CAM | Note |
-| :--- | :--- | :--- |
-| 5V / VCC | 5V | Powers the board |
-| GND | GND | Common ground |
-| TX | **GPIO 3** (U0R) | Receive Data |
-| RX | **GPIO 1** (U0T) | Transmit Data |
-| **GND** | **GPIO 0** | **MUST** connect during boot to flash! |
+1. **ESP32-CAM**: Handles ONLY the Camera and WiFi video stream.
+2. **ESP32 Dev Board**: Handles Ultrasonic, IR, Vibration, and GPS.
 
-> **After Flashing:** Remove the wire between **GPIO 0** and **GND**, then press the Reset button to run the code.
-
----
-
-## 🔍 Troubleshooting Connections
-
-1. **Camera Failures:** If the camera gives errors, check if the Ultrasonic Sensor is interfering. We specifically avoided camera pins (like GPIO 4, 2, 15) to prevent this.
-2. **Brownout / Crash:** If the board resets when WiFi turns on, your power supply is too weak. Add a **470µF capacitor** between 5V and GND.
-3. **No Sensor Data:** Ensure the HC-SR04 is getting full 5V. It often fails on 3.3V.
+*This requires changing the code to run on two separate devices.*

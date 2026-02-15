@@ -21,8 +21,9 @@
 - [ ] Configure WiFi SSID & password in firmware
 - [ ] Configure backend server IP in firmware
 - [ ] Wire HC-SR04 ultrasonic sensor (Trigger → GPIO12, Echo → GPIO13)
+- [ ] Wire IR Obstacle Sensor (OUT → GPIO 2)
 - [ ] Wire vibration motor (→ GPIO14)
-- [ ] Connect GPS module (NEO-6M) to ESP32 via Serial2
+- [ ] Connect GPS module (NEO-6M) → ESP32 (TX → GPIO16)
 - [ ] Power system — Li-Po 5000mAh battery + voltage regulator
 - [ ] 3D print or build cap enclosure
 
