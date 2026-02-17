@@ -15,6 +15,12 @@ from flask import Flask, Response, jsonify, send_from_directory, request, abort
 from flask_cors import CORS
 import requests
 
+# Import AI detector
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from ai_modules.detector import get_detector
+from ai_modules.llm_alerts import get_alert_generator
+
 # ============================================
 # CONFIGURATION
 # ============================================
@@ -186,6 +192,59 @@ def get_distance():
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()})
+
+
+# --- API: Object Detection ---
+
+@app.route("/api/detect", methods=["POST"])
+def detect_objects():
+    """
+    Run YOLOv5 object detection on a frame.
+    Expected JSON: { "image": "base64_encoded_image" }
+    Returns: { "detections": [...], "alert_level": str, "annotated_frame": base64 }
+    """
+    try:
+        data = request.get_json(force=True)
+        image_b64 = data.get("image")
+        
+        if not image_b64:
+            return jsonify({"error": "No image provided", "detections": []}), 400
+        
+        detector = get_detector()
+        result = detector.detect_from_base64(image_b64)
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"Detection error: {e}")
+        return jsonify({"error": str(e), "detections": []}), 500
+
+
+# --- API: Generate Smart Alert (LLM) ---
+
+@app.route("/api/generate-alert", methods=["POST"])
+def generate_smart_alert():
+    """
+    Generate a natural language alert using LLM.
+    Expected JSON: { "detections": [...], "location": "optional location name" }
+    Returns: { "alert": "natural language alert text" }
+    """
+    try:
+        data = request.get_json(force=True)
+        detections = data.get("detections", [])
+        location = data.get("location")
+        
+        if not detections:
+            return jsonify({"alert": None})
+        
+        generator = get_alert_generator()
+        alert_text = generator.generate_alert(detections, location)
+        
+        return jsonify({"alert": alert_text})
+        
+    except Exception as e:
+        logger.error(f"Alert generation error: {e}")
+        return jsonify({"alert": None, "error": str(e)}), 500
 
 
 # ============================================

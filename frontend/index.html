@@ -3,167 +3,359 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Smart AI Cap Dashboard — Monitor your blind obstacle detection device with live camera feed and GPS tracking.">
-    <title>Smart AI Cap — Dashboard</title>
+    <meta name="description" content="VisionX - Advanced AI Wearable for Blind Obstacle Detection">
+    <title>VisionX Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- ===== Animated Background ===== -->
-    <div class="bg-mesh" aria-hidden="true">
-        <div class="mesh-orb mesh-orb-1"></div>
-        <div class="mesh-orb mesh-orb-2"></div>
-        <div class="mesh-orb mesh-orb-3"></div>
+    <!-- Loading Screen -->
+    <div class="loading-screen" id="loading-screen">
+        <div class="loading-container">
+            <div class="loading-title">VisionX</div>
+            <div class="loading-subtitle">Initializing System</div>
+            
+            <!-- Animated Loading Spinner -->
+            <div class="loading-spinner">
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+                <div class="spinner-ring"></div>
+                <div class="spinner-dot"></div>
+            </div>
+            
+            <!-- Loading Progress -->
+            <div class="loading-progress">
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                </div>
+                <div class="progress-text">
+                    <span class="progress-label">Loading</span>
+                    <span class="progress-percentage">0%</span>
+                </div>
+            </div>
+            
+            <!-- Loading Status Messages -->
+            <div class="loading-messages">
+                <div class="message-item">Connecting to sensors...</div>
+                <div class="message-item">Initializing AI model...</div>
+                <div class="message-item">Loading dashboard...</div>
+            </div>
+        </div>
     </div>
 
-    <!-- ===== Top Navigation Bar ===== -->
-    <header class="topbar" id="topbar">
-        <div class="topbar-left">
-            <div class="logo" id="logo">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <circle cx="14" cy="14" r="13" stroke="url(#logoGrad)" stroke-width="2.5"/>
-                    <circle cx="14" cy="14" r="5" fill="url(#logoGrad)"/>
-                    <defs>
-                        <linearGradient id="logoGrad" x1="0" y1="0" x2="28" y2="28">
-                            <stop stop-color="#6C63FF"/>
-                            <stop offset="1" stop-color="#00D2FF"/>
-                        </linearGradient>
-                    </defs>
-                </svg>
-                <span class="logo-text">SmartCap</span>
+    <div class="animated-bg"></div>
+    <div class="container">
+        <header class="header minimal-header">
+            <div class="header-content">
+                <!-- Logo Section -->
+                <div class="logo-section">
+                    <div class="logo">
+                        <div class="logo-icon">
+                            <svg class="lightning-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z"/>
+                            </svg>
+                        </div>
+                        <h1 class="logo-text">VisionX</h1>
+                    </div>
+                </div>
+                
+                <!-- Header analytics removed -->
+                
+                <!-- Settings Button -->
+                <div class="header-settings">
+                    <button class="settings-toggle" id="header-settings-btn" title="Settings">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+                        </svg>
+                    </button>
+                    <!-- Settings Dropdown -->
+                    <div class="settings-dropdown" id="settings-dropdown">
+                        <div class="dropdown-item">
+                            <span class="dropdown-label">Voice Speed</span>
+                            <input type="range" class="dropdown-slider" id="voice-speed" min="0.5" max="2" step="0.1" value="1">
+                        </div>
+                        <div class="dropdown-item">
+                            <span class="dropdown-label">Sensitivity</span>
+                            <input type="range" class="dropdown-slider" id="detection-sensitivity" min="0.2" max="0.8" step="0.1" value="0.4">
+                        </div>
+                        <div class="dropdown-item">
+                            <span class="dropdown-label">Alert Range</span>
+                            <div class="dropdown-toggle-group">
+                                <button class="dropdown-toggle active" data-range="close">Close</button>
+                                <button class="dropdown-toggle" data-range="medium">Medium</button>
+                                <button class="dropdown-toggle" data-range="far">Far</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
-        <div class="topbar-center">
-            <h1 class="page-title">Dashboard</h1>
-        </div>
-        <div class="topbar-right">
-            <div class="device-badge" id="device-badge">
-                <span class="status-dot" id="status-dot"></span>
-                <span class="device-label" id="device-label">Connecting…</span>
-            </div>
-        </div>
-    </header>
+        </header>
 
-    <!-- ===== Main Content ===== -->
-    <main class="dashboard" id="dashboard">
+        <main class="main-grid">
+            <section class="left-column">
+                <div class="panel camera-panel">
+                    <div class="panel-header">
+                        <h2 class="panel-title">Live Feed</h2>
+                        <div class="camera-controls">
+                            <button class="icon-btn" id="btn-reconnect" title="Reconnect" aria-label="Reconnect camera">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6M20.754 5.145A9 9 0 005.064 19.579M3.246 18.855A9 9 0 0018.936 4.42" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </button>
+                            <button class="icon-btn" id="btn-fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="camera-viewport">
+                        <video id="camera-feed" autoplay playsinline muted></video>
+                        <canvas id="detection-canvas"></canvas>
+                        <div class="camera-overlay" id="camera-overlay">
+                            <div class="spinner"></div>
+                            <p>Initializing Webcam...</p>
+                        </div>
+                    </div>
+                </div>
 
-        <!-- Status Cards Row -->
-        <section class="status-row" id="status-row">
-            <div class="stat-card" id="stat-distance">
-                <div class="stat-icon">
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <div class="panel detection-panel">
+                    <div class="panel-header">
+                        <h3 class="panel-title">Current Detection</h3>
+                        <div class="live-indicator">
+                            <span class="live-dot"></span>
+                            <span class="live-text">LIVE</span>
+                        </div>
+                        <div class="confidence-badge" id="confidence-badge">—</div>
+                    </div>
+                    <div class="detection-content">
+                        <!-- Mini Radar Display -->
+                        <div class="mini-radar" id="mini-radar">
+                            <div class="radar-sweep"></div>
+                            <div class="radar-rings">
+                                <div class="radar-ring critical"></div>
+                                <div class="radar-ring warning"></div>
+                                <div class="radar-ring safe"></div>
+                            </div>
+                            <div class="radar-center"></div>
+                            <div class="radar-objects" id="radar-objects"></div>
+                        </div>
+                        
+                        <div class="detection-display" id="detection-display">
+                            <div class="detection-placeholder">
+                                <p>Scanning environment...</p>
+                                <div class="scan-animation"></div>
+                            </div>
+                        </div>
+                        <div class="detection-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">Distance</span>
+                                <span class="stat-value" id="detection-distance">—</span>
+                            </div>
+                            <div class="stat-item">
+                                <span class="stat-label">Alert Level</span>
+                                <span class="stat-value" id="alert-level">CLEAR</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-info">
-                    <span class="stat-value" id="val-distance">—</span>
-                    <span class="stat-label">Distance</span>
+            </section>
+
+            <section class="right-column">
+                <div class="panel alert-panel">
+                    <div class="panel-header">
+                        <h3 class="panel-title">Alert System</h3>
+                    </div>
+                    <div class="alert-zones">
+                        <div class="alert-zone" id="alert-critical">
+                            <div class="zone-indicator critical"></div>
+                            <div class="zone-info">
+                                <span class="zone-label">CRITICAL</span>
+                                <span class="zone-value">— m</span>
+                            </div>
+                        </div>
+                        <div class="alert-zone" id="alert-warning">
+                            <div class="zone-indicator warning"></div>
+                            <div class="zone-info">
+                                <span class="zone-label">WARNING</span>
+                                <span class="zone-value">— m</span>
+                            </div>
+                        </div>
+                        <div class="alert-zone" id="alert-safe">
+                            <div class="zone-indicator safe"></div>
+                            <div class="zone-info">
+                                <span class="zone-label">SAFE</span>
+                                <span class="zone-value">— m</span>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="stat-card" id="stat-alert">
-                <div class="stat-icon stat-icon-alert">
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+                <div class="panel status-panel">
+                    <div class="panel-header">
+                        <h3 class="panel-title">System Status</h3>
+                    </div>
+                    
+                    <!-- Cap Connection Status -->
+                    <div class="cap-connection" id="cap-connection">
+                        <div class="cap-icon">🧢</div>
+                        <div class="cap-info">
+                            <span class="cap-label">VisionX Device</span>
+                            <span class="cap-status" id="cap-status">Disconnected</span>
+                        </div>
+                        <div class="cap-indicator" id="cap-indicator"></div>
+                    </div>
+                    
+                    <div class="status-lights">
+                        <div class="status-item">
+                            <div class="light-indicator" id="light-esp32"></div>
+                            <span>ESP32</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="light-indicator" id="light-camera"></div>
+                            <span>Camera</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="light-indicator" id="light-ai"></div>
+                            <span>AI Engine</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="light-indicator" id="light-voice"></div>
+                            <span>Voice</span>
+                        </div>
+                        <div class="status-item">
+                            <div class="light-indicator" id="light-gps"></div>
+                            <span>GPS</span>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-info">
-                    <span class="stat-value" id="val-alert">SAFE</span>
-                    <span class="stat-label">Alert Level</span>
+
+                <div class="panel voice-panel active">
+                    <div class="panel-header">
+                        <h3 class="panel-title">Voice Announcements</h3>
+                        <span class="voice-always-on">ALWAYS ON</span>
+                        <button class="voice-toggle" id="voice-toggle" title="Toggle voice announcements">
+                            <svg class="voice-on-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                            </svg>
+                            <svg class="voice-off-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                                <line x1="23" y1="9" x2="17" y2="15"/>
+                                <line x1="17" y1="9" x2="23" y2="15"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="voice-content">
+                        <div class="voice-visualizer" id="voice-vis">
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                            <div class="bar"></div>
+                        </div>
+                        <span class="voice-status" id="voice-status">Active</span>
+                    </div>
                 </div>
-            </div>
-            <div class="stat-card" id="stat-battery">
-                <div class="stat-icon stat-icon-battery">
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24"><rect x="1" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="2"/><line x1="23" y1="10" x2="23" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+
+                <div class="panel stats-panel">
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <span class="stat-icon">🔋</span>
+                            <div class="stat-info">
+                                <p class="stat-title">Battery</p>
+                                <p class="stat-data" id="stat-battery">—%</p>
+                            </div>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-icon">📡</span>
+                            <div class="stat-info">
+                                <p class="stat-title">WiFi</p>
+                                <p class="stat-data" id="stat-signal">—</p>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div class="stat-info">
-                    <span class="stat-value" id="val-battery">—</span>
-                    <span class="stat-label">Battery</span>
+                
+                <!-- Session Analytics Panel -->
+                <div class="panel analytics-panel">
+                    <div class="panel-header">
+                        <h3 class="panel-title">Session Analytics</h3>
+                        <span class="session-time" id="session-time">00:00:00</span>
+                    </div>
+                    <div class="analytics-grid">
+                        <div class="analytics-item">
+                            <div class="analytics-value" id="total-detections">0</div>
+                            <div class="analytics-label">Total Detections</div>
+                        </div>
+                        <div class="analytics-item">
+                            <div class="analytics-value danger" id="danger-count">0</div>
+                            <div class="analytics-label">Danger Alerts</div>
+                        </div>
+                        <div class="analytics-item">
+                            <div class="analytics-value" id="persons-detected">0</div>
+                            <div class="analytics-label">Persons</div>
+                        </div>
+                        <div class="analytics-item">
+                            <div class="analytics-value" id="vehicles-detected">0</div>
+                            <div class="analytics-label">Vehicles</div>
+                        </div>
+                    </div>
+                    <div class="analytics-chart">
+                        <div class="chart-label">Detection Timeline</div>
+                        <div class="mini-chart" id="detection-chart">
+                            <div class="chart-bar" style="height: 20%"></div>
+                            <div class="chart-bar" style="height: 35%"></div>
+                            <div class="chart-bar" style="height: 60%"></div>
+                            <div class="chart-bar" style="height: 45%"></div>
+                            <div class="chart-bar" style="height: 80%"></div>
+                            <div class="chart-bar" style="height: 55%"></div>
+                            <div class="chart-bar" style="height: 30%"></div>
+                            <div class="chart-bar active" style="height: 70%"></div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="stat-card" id="stat-signal">
-                <div class="stat-icon stat-icon-signal">
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24"><path d="M1 20h2V10h-2zM7 20h2V4h-2zM13 20h2V8h-2zM19 20h2V2h-2z" fill="currentColor"/></svg>
+            </section>
+        </main>
+
+        <!-- Detection History section removed -->
+
+        <section class="map-section" id="map-section">
+            <div class="panel map-panel">
+                <div class="panel-header">
+                    <h3 class="panel-title">Location Tracking</h3>
+                    <span class="gps-source" id="gps-source">GPS: Device</span>
                 </div>
-                <div class="stat-info">
-                    <span class="stat-value" id="val-signal">—</span>
-                    <span class="stat-label">WiFi Signal</span>
+                <div class="map-container">
+                    <div id="map">
+                        <div class="map-placeholder">
+                            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+                                <circle cx="12" cy="10" r="3"/>
+                            </svg>
+                            <p>Location Map</p>
+                            <span>Awaiting GPS signal...</span>
+                        </div>
+                    </div>
+                    <button class="locate-btn" id="locate-btn" title="Get my exact location">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="3"/>
+                            <path d="M12 2v4m0 12v4m-10-10h4m12 0h4"/>
+                        </svg>
+                    </button>
                 </div>
+                <div class="location-name" id="location-name">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span id="location-text">Waiting for location...</span>
+                </div>
+                <!-- Location coordinates display removed -->
             </div>
         </section>
+    </div>
 
-        <!-- Main Panels -->
-        <section class="panels" id="panels">
-
-            <!-- Camera Feed Panel -->
-            <div class="panel panel-camera" id="panel-camera">
-                <div class="panel-header">
-                    <h2 class="panel-title">
-                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="2"/></svg>
-                        Live Camera Feed
-                    </h2>
-                    <div class="panel-badge" id="camera-badge">
-                        <span class="pulse-dot"></span>
-                        LIVE
-                    </div>
-                </div>
-                <div class="camera-viewport" id="camera-viewport">
-                    <img id="camera-feed" src="" alt="ESP32-CAM Live Feed" />
-                    <div class="camera-overlay" id="camera-overlay">
-                        <div class="camera-spinner"></div>
-                        <p>Waiting for ESP32-CAM…</p>
-                        <p class="camera-hint">Make sure your ESP32 is powered on and connected to the same network.</p>
-                    </div>
-                </div>
-                <div class="camera-controls" id="camera-controls">
-                    <button class="btn btn-secondary" id="btn-refresh-camera" title="Refresh Stream">
-                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><path d="M23 4v6h-6M1 20v-6h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        Reconnect
-                    </button>
-                    <button class="btn btn-secondary" id="btn-fullscreen" title="Fullscreen">
-                        <svg width="16" height="16" fill="none" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="9 21 3 21 3 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        Fullscreen
-                    </button>
-                </div>
-            </div>
-
-            <!-- Map / Location Panel -->
-            <div class="panel panel-map" id="panel-map">
-                <div class="panel-header">
-                    <h2 class="panel-title">
-                        <svg width="18" height="18" fill="none" viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>
-                        User Location
-                    </h2>
-                    <div class="panel-coords" id="panel-coords">
-                        <span id="coord-lat">—</span>, <span id="coord-lng">—</span>
-                    </div>
-                </div>
-                <div class="map-container" id="map-container">
-                    <div id="map"></div>
-                </div>
-                <div class="map-info-bar" id="map-info-bar">
-                    <div class="map-info-item">
-                        <span class="map-info-label">Speed</span>
-                        <span class="map-info-value" id="val-speed">0 km/h</span>
-                    </div>
-                    <div class="map-info-item">
-                        <span class="map-info-label">Altitude</span>
-                        <span class="map-info-value" id="val-altitude">— m</span>
-                    </div>
-                    <div class="map-info-item">
-                        <span class="map-info-label">Accuracy</span>
-                        <span class="map-info-value" id="val-accuracy">— m</span>
-                    </div>
-                    <div class="map-info-item">
-                        <span class="map-info-label">Last Update</span>
-                        <span class="map-info-value" id="val-last-update">—</span>
-                    </div>
-                </div>
-            </div>
-
-        </section>
-
-    </main>
-
-    <!-- ===== Scripts ===== -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="app.js"></script>
 </body>
