@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from ai_modules.detector import get_detector
 from ai_modules.llm_alerts import get_alert_generator
+from ai_modules.ocr_engine import get_ocr_reader
 
 # ============================================
 # CONFIGURATION
@@ -204,19 +205,25 @@ def detect_objects():
     Returns: { "detections": [...], "alert_level": str, "annotated_frame": base64 }
     """
     try:
+        logger.info("Detection request received")
         data = request.get_json(force=True)
         image_b64 = data.get("image")
         
         if not image_b64:
+            logger.warning("No image data in request")
             return jsonify({"error": "No image provided", "detections": []}), 400
         
+        logger.info(f"Image data received, length: {len(image_b64)}")
+        logger.info("Loading detector...")
         detector = get_detector()
+        logger.info("Detector loaded, running detection...")
         result = detector.detect_from_base64(image_b64)
+        logger.info(f"Detection complete: {result['count']} objects found")
         
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"Detection error: {e}")
+        logger.error(f"Detection error: {e}", exc_info=True)
         return jsonify({"error": str(e), "detections": []}), 500
 
 
@@ -245,6 +252,41 @@ def generate_smart_alert():
     except Exception as e:
         logger.error(f"Alert generation error: {e}")
         return jsonify({"alert": None, "error": str(e)}), 500
+
+
+# --- API: OCR Text Detection ---
+
+@app.route("/api/ocr", methods=["POST"])
+def detect_text():
+    """
+    Detect text in an image using OCR.
+    Expected JSON: { "image": "base64_encoded_image" }
+    Returns: { "texts": [...], "combined_text": str, "count": int }
+    """
+    try:
+        data = request.get_json(force=True)
+        image_b64 = data.get("image")
+        
+        if not image_b64:
+            return jsonify({"error": "No image provided", "texts": []}), 400
+        
+        logger.info("OCR request received")
+        ocr = get_ocr_reader()
+        result = ocr.detect_from_base64(image_b64)
+        
+        # Log what was found
+        if result.get("error"):
+            logger.warning(f"OCR error: {result['error']}")
+        elif result.get("combined_text"):
+            logger.info(f"OCR detected text: '{result['combined_text'][:80]}' (count: {result.get('count', 0)})")
+        else:
+            logger.debug("OCR: No text found in image")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"OCR error: {e}", exc_info=True)
+        return jsonify({"error": str(e), "texts": []}), 500
 
 
 # ============================================

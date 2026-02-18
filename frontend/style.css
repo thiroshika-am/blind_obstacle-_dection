@@ -1472,6 +1472,65 @@ textarea {
 }
 
 /* ============================================
+   DETECTED TEXT SECTION
+   ============================================ */
+
+.detected-text-section {
+    margin-top: var(--gap-md);
+    padding: var(--gap-md);
+    background: linear-gradient(135deg, rgba(0, 212, 255, 0.08) 0%, rgba(124, 58, 237, 0.05) 100%);
+    border-radius: var(--radius-md);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+}
+
+.text-section-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+}
+
+.text-icon {
+    font-size: 1.1rem;
+}
+
+.text-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.detected-text-content {
+    min-height: 40px;
+    padding: 0.75rem;
+    background: rgba(15, 23, 42, 0.6);
+    border-radius: 0.5rem;
+    border: 1px solid rgba(0, 212, 255, 0.1);
+    transition: all 0.3s ease;
+}
+
+.detected-text-content.has-text {
+    border-color: rgba(16, 185, 129, 0.4);
+    background: rgba(16, 185, 129, 0.1);
+}
+
+.detected-text-content .no-text {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
+}
+
+.detected-text-content .detected-text {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-family: 'Space Mono', monospace;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+/* ============================================
    STATUS LIGHTS
    ============================================ */
 
@@ -3501,10 +3560,6 @@ textarea {
     
     .minimal-header .logo-text {
         font-size: 1.2rem;
-    }
-    
-    .analytics-grid {
-        grid-template-columns: repeat(2, 1fr);
     }
 }
 

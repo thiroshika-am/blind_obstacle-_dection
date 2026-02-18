@@ -1,8 +1,8 @@
 """
 YOLO Object Detection Module for SmartCap AI
 Detects obstacles and objects from webcam frames
-Uses ultralytics YOLOv8l (large) for high-accuracy detection
-GPU-accelerated with CUDA for real-time performance
+Uses ultralytics YOLOv8n (nano) for fast real-time detection
+GPU-accelerated with CUDA for maximum performance
 Includes object tracking for position change detection
 """
 
@@ -15,9 +15,9 @@ import time
 from typing import Dict, List, Tuple, Optional
 from ultralytics import YOLO
 
-# Store model in workspace root - using YOLOv8l for better accuracy
+# Store model in workspace root - using YOLOv8n for fast detection
 MODEL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(MODEL_DIR, "yolov8l.pt")
+MODEL_PATH = os.path.join(MODEL_DIR, "yolov8n.pt")
 
 # Auto-detect GPU
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -63,14 +63,14 @@ class ObjectDetector:
     def _load_model(self):
         """Load YOLO model - auto downloads if not present."""
         try:
-            print(f"Loading YOLOv8l (large) model from {MODEL_PATH}...")
+            print(f"Loading YOLOv8n (nano) model from {MODEL_PATH}...")
             print(f"Device: {DEVICE.upper()} {'(GPU Accelerated)' if DEVICE == 'cuda' else '(CPU Mode)'}")
             if DEVICE == 'cuda':
                 print(f"GPU: {torch.cuda.get_device_name(0)}")
-            # YOLOv8l provides high accuracy for safety-critical blind assistance
+            # YOLOv8n provides fast detection for real-time blind assistance
             self.model = YOLO(MODEL_PATH)
             self.model.to(DEVICE)
-            print("YOLOv8l model loaded successfully on GPU!" if DEVICE == 'cuda' else "YOLOv8l model loaded (CPU mode)")
+            print("YOLOv8n model loaded successfully on GPU!" if DEVICE == 'cuda' else "YOLOv8n model loaded (CPU mode)")
         except Exception as e:
             print(f"Error loading model: {e}")
             raise

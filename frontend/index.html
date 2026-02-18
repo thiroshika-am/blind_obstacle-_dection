@@ -82,14 +82,6 @@
                             <span class="dropdown-label">Sensitivity</span>
                             <input type="range" class="dropdown-slider" id="detection-sensitivity" min="0.2" max="0.8" step="0.1" value="0.4">
                         </div>
-                        <div class="dropdown-item">
-                            <span class="dropdown-label">Alert Range</span>
-                            <div class="dropdown-toggle-group">
-                                <button class="dropdown-toggle active" data-range="close">Close</button>
-                                <button class="dropdown-toggle" data-range="medium">Medium</button>
-                                <button class="dropdown-toggle" data-range="far">Far</button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -189,6 +181,16 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Detected Text Display -->
+                    <div class="detected-text-section" id="detected-text-section">
+                        <div class="text-section-header">
+                            <span class="text-label">Detected Text</span>
+                        </div>
+                        <div class="detected-text-content" id="detected-text-content">
+                            <span class="no-text">No text detected</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="panel status-panel">
@@ -273,45 +275,6 @@
                                 <p class="stat-title">WiFi</p>
                                 <p class="stat-data" id="stat-signal">—</p>
                             </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Session Analytics Panel -->
-                <div class="panel analytics-panel">
-                    <div class="panel-header">
-                        <h3 class="panel-title">Session Analytics</h3>
-                        <span class="session-time" id="session-time">00:00:00</span>
-                    </div>
-                    <div class="analytics-grid">
-                        <div class="analytics-item">
-                            <div class="analytics-value" id="total-detections">0</div>
-                            <div class="analytics-label">Total Detections</div>
-                        </div>
-                        <div class="analytics-item">
-                            <div class="analytics-value danger" id="danger-count">0</div>
-                            <div class="analytics-label">Danger Alerts</div>
-                        </div>
-                        <div class="analytics-item">
-                            <div class="analytics-value" id="persons-detected">0</div>
-                            <div class="analytics-label">Persons</div>
-                        </div>
-                        <div class="analytics-item">
-                            <div class="analytics-value" id="vehicles-detected">0</div>
-                            <div class="analytics-label">Vehicles</div>
-                        </div>
-                    </div>
-                    <div class="analytics-chart">
-                        <div class="chart-label">Detection Timeline</div>
-                        <div class="mini-chart" id="detection-chart">
-                            <div class="chart-bar" style="height: 20%"></div>
-                            <div class="chart-bar" style="height: 35%"></div>
-                            <div class="chart-bar" style="height: 60%"></div>
-                            <div class="chart-bar" style="height: 45%"></div>
-                            <div class="chart-bar" style="height: 80%"></div>
-                            <div class="chart-bar" style="height: 55%"></div>
-                            <div class="chart-bar" style="height: 30%"></div>
-                            <div class="chart-bar active" style="height: 70%"></div>
                         </div>
                     </div>
                 </div>

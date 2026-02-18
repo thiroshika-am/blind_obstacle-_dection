@@ -112,7 +112,8 @@ const CONFIG = {
     POLL_INTERVAL: 3000,
     STREAM_RETRY_INTERVAL: 5000,
     DETECTION_HISTORY_MAX: 10,
-    DETECTION_INTERVAL: 200, // Run detection every 200ms for smooth movement tracking
+    DETECTION_INTERVAL: 100, // Run detection every 100ms for fast real-time tracking
+    OCR_INTERVAL: 2000, // Run OCR every 2 seconds (text doesn't change as fast)
 };
 
 const STATE = {
@@ -123,23 +124,19 @@ const STATE = {
     streamRetryTimer: null,
     accuracyCircle: null,
     detectionTimer: null,
+    ocrTimer: null, // OCR detection timer
     isDetecting: false,
+    isReadingText: false, // OCR in progress
     lastDetections: [],
+    lastOcrText: '', // Last detected text
+    announcedTexts: new Set(), // Texts already announced
     capConnected: false,
     hasInitialLocation: false,
-    // Premium Analytics
-    sessionStart: Date.now(),
-    totalDetections: 0,
-    dangerAlerts: 0,
-    personsDetected: 0,
-    vehiclesDetected: 0,
-    safetyScore: 100,
-    currentMode: 'auto',
-    detectionTimeline: [0, 0, 0, 0, 0, 0, 0, 0],
     environment: 'detecting',
     voiceSpeed: 1.0,
     detectionSensitivity: 0.4,
-    alertRange: 'medium',
+    sessionStart: Date.now(),
+    safetyScore: 100,
 };
 
 // DOM references - populated after DOMContentLoaded
@@ -188,6 +185,7 @@ function initDOMRefs() {
 // ============================================
 
 let webcamStream = null;
+let cameraWatchdog = null;
 
 async function connectCameraStream() {
     const feed = DOM.cameraFeed;
@@ -221,15 +219,45 @@ async function connectCameraStream() {
         // Start AI detection after a short delay
         setTimeout(startDetection, 1000);
         
+        // Start watchdog to keep camera and detection always on
+        startCameraWatchdog();
+        
     } catch (err) {
         console.error('Webcam error:', err.message);
         overlay.classList.remove('hidden');
         overlay.querySelector('p').textContent = 'Camera access denied';
         updateStatusLight('camera', false);
+        // Retry camera connection after 3 seconds
+        setTimeout(connectCameraStream, 3000);
     }
 }
 
+// Watchdog to ensure camera and detection stay always on
+function startCameraWatchdog() {
+    if (cameraWatchdog) clearInterval(cameraWatchdog);
+    
+    cameraWatchdog = setInterval(() => {
+        // Check if camera stream is still active
+        if (!webcamStream || !webcamStream.active) {
+            console.log('Camera disconnected, reconnecting...');
+            connectCameraStream();
+            return;
+        }
+        
+        // Ensure detection is running when camera is on
+        if (webcamStream && webcamStream.active && !STATE.detectionTimer) {
+            console.log('Detection stopped, restarting...');
+            startDetection();
+        }
+    }, 2000); // Check every 2 seconds
+}
+
 function stopWebcam() {
+    // Clear watchdog when manually stopping
+    if (cameraWatchdog) {
+        clearInterval(cameraWatchdog);
+        cameraWatchdog = null;
+    }
     if (webcamStream) {
         webcamStream.getTracks().forEach(track => track.stop());
         webcamStream = null;
@@ -256,6 +284,9 @@ function startDetection() {
     // Run detection at regular intervals
     STATE.detectionTimer = setInterval(runDetection, CONFIG.DETECTION_INTERVAL);
     console.log('Detection started');
+    
+    // Start OCR detection (less frequent)
+    startOCR();
 }
 
 function stopDetection() {
@@ -263,34 +294,267 @@ function stopDetection() {
         clearInterval(STATE.detectionTimer);
         STATE.detectionTimer = null;
     }
+    stopOCR();
     updateStatusLight('ai', false);
 }
 
+// ============================================
+// OCR TEXT DETECTION
+// ============================================
+
+function startOCR() {
+    if (STATE.ocrTimer) return;
+    STATE.ocrTimer = setInterval(runOCR, CONFIG.OCR_INTERVAL);
+    console.log('OCR started');
+}
+
+function stopOCR() {
+    if (STATE.ocrTimer) {
+        clearInterval(STATE.ocrTimer);
+        STATE.ocrTimer = null;
+    }
+}
+
+async function runOCR() {
+    if (STATE.isReadingText || !DOM.cameraFeed || !webcamStream || !webcamStream.active) {
+        return;
+    }
+    
+    const video = DOM.cameraFeed;
+    if (video.readyState < 2) return;
+    
+    STATE.isReadingText = true;
+    
+    try {
+        // Capture frame for OCR (higher resolution than object detection for better text reading)
+        const canvas = document.createElement('canvas');
+        canvas.width = 800;
+        canvas.height = 600;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, 800, 600);
+        
+        const imageData = canvas.toDataURL('image/jpeg', 0.7);
+        
+        const response = await fetch(`${CONFIG.API_BASE}/api/ocr`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData })
+        });
+        
+        if (!response.ok) return;
+        
+        const result = await response.json();
+        handleOCRResult(result);
+        
+    } catch (err) {
+        console.error('OCR error:', err.message);
+    } finally {
+        STATE.isReadingText = false;
+    }
+}
+
+// OCR distance threshold (in meters) - only detect text within this range
+const OCR_MAX_DISTANCE = 5.0;
+
+// Estimate text distance based on bounding box height
+// Assumes average text height of 5cm and 800x600 OCR image
+function estimateTextDistance(bbox, frameHeight = 600) {
+    if (!bbox) return null;
+    
+    const bboxHeight = bbox.y2 - bbox.y1;
+    if (bboxHeight <= 0) return null;
+    
+    // Reference: average text/sign height ~5cm, focal length approximation
+    const refHeightCm = 5;
+    const focalLength = frameHeight * 0.8;
+    
+    // Distance = (real height * focal length) / pixel height
+    const distanceCm = (refHeightCm * focalLength) / bboxHeight;
+    const distanceM = distanceCm / 100;
+    
+    // Clamp to reasonable range
+    return Math.max(0.2, Math.min(15.0, distanceM));
+}
+
+function handleOCRResult(result) {
+    const { texts, combined_text, count } = result;
+    
+    if (!texts || texts.length === 0) {
+        return; // No text detected
+    }
+    
+    // Filter texts within 5 meter range
+    const nearbyTexts = texts.filter(t => {
+        const distance = estimateTextDistance(t.bbox);
+        t.distance_m = distance; // Store for later use
+        return distance !== null && distance <= OCR_MAX_DISTANCE;
+    });
+    
+    if (nearbyTexts.length === 0) {
+        return; // No text within range
+    }
+    
+    // Combine only nearby text
+    const nearbyText = nearbyTexts.map(t => t.text).join(' ').trim();
+    
+    if (nearbyText.length < 3) {
+        return; // No meaningful text
+    }
+    
+    // Check if this is new text (not recently announced)
+    const normalizedText = nearbyText.toLowerCase();
+    if (STATE.announcedTexts.has(normalizedText)) {
+        return; // Already announced this text
+    }
+    
+    // Get closest text distance for display
+    const closestDistance = Math.min(...nearbyTexts.map(t => t.distance_m || 5));
+    
+    // Update state
+    STATE.lastOcrText = nearbyText;
+    STATE.announcedTexts.add(normalizedText);
+    
+    // Clear old announced texts after 30 seconds
+    setTimeout(() => {
+        STATE.announcedTexts.delete(normalizedText);
+    }, 30000);
+    
+    // Announce the text via voice with distance
+    announceText(nearbyText, closestDistance);
+    
+    // Display the text on screen with distance
+    displayDetectedText(nearbyText, nearbyTexts, closestDistance);
+    
+    console.log(`OCR detected (${closestDistance.toFixed(1)}m):`, nearbyText);
+}
+
+function announceText(text, distance) {
+    if (!STATE.voiceActive || !speechSynthesis) return;
+    
+    // Limit text length for announcement
+    let announcement = text;
+    if (text.length > 100) {
+        announcement = text.substring(0, 100) + '...';
+    }
+    
+    // Include distance in announcement
+    const distanceText = distance ? `, ${distance.toFixed(1)} meters away` : '';
+    
+    console.log('Announcing text via voice:', announcement);
+    
+    // Cancel any current speech to prioritize text reading
+    speechSynthesis.cancel();
+    
+    // Create and speak the utterance directly
+    const utterance = new SpeechSynthesisUtterance(`Text says: ${announcement}${distanceText}`);
+    utterance.rate = STATE.voiceSpeed || 0.9;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    
+    if (preferredVoice) utterance.voice = preferredVoice;
+    
+    utterance.onstart = () => {
+        console.log('Voice started speaking text');
+        const status = document.getElementById('voice-status');
+        if (status) status.textContent = 'Reading text...';
+    };
+    
+    utterance.onend = () => {
+        const status = document.getElementById('voice-status');
+        if (status) status.textContent = 'Ready';
+    };
+    
+    utterance.onerror = (e) => {
+        console.error('Speech error:', e);
+    };
+    
+    speechSynthesis.speak(utterance);
+}
+
+function displayDetectedText(text, textItems, distance) {
+    // Display in Alert System panel
+    const textContent = document.getElementById('detected-text-content');
+    if (textContent) {
+        const distanceStr = distance ? ` <span style="color: var(--primary);">(${distance.toFixed(1)}m)</span>` : '';
+        textContent.innerHTML = `<span class="detected-text">${escapeHtml(text)}${distanceStr}</span>`;
+        textContent.classList.add('has-text');
+        
+        // Auto-clear after 10 seconds
+        clearTimeout(textContent._clearTimeout);
+        textContent._clearTimeout = setTimeout(() => {
+            textContent.innerHTML = '<span class="no-text">No text detected</span>';
+            textContent.classList.remove('has-text');
+        }, 10000);
+    }
+    
+    // Also show briefly on camera overlay for immediate feedback
+    let textDisplay = document.getElementById('ocr-text-display');
+    if (!textDisplay) {
+        textDisplay = document.createElement('div');
+        textDisplay.id = 'ocr-text-display';
+        textDisplay.className = 'ocr-text-display';
+        textDisplay.style.cssText = `
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00D4FF;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            z-index: 100;
+            max-height: 60px;
+            overflow-y: auto;
+            border: 1px solid #00D4FF;
+        `;
+        const cameraPanel = document.querySelector('.camera-panel');
+        if (cameraPanel) cameraPanel.appendChild(textDisplay);
+    }
+    
+    textDisplay.innerHTML = `<span style="color: #10B981; font-weight: bold;">TEXT:</span> ${escapeHtml(text)}`;
+    textDisplay.style.opacity = '1';
+    
+    // Brief overlay - auto-hide after 3 seconds
+    clearTimeout(textDisplay._hideTimeout);
+    textDisplay._hideTimeout = setTimeout(() => {
+        textDisplay.style.opacity = '0';
+        setTimeout(() => textDisplay.remove(), 300);
+    }, 3000);
+}
+
 async function runDetection() {
-    if (STATE.isDetecting || !DOM.cameraFeed || !webcamStream) {
-        // console.log('Skipping detection:', { isDetecting: STATE.isDetecting, hasFeed: !!DOM.cameraFeed, hasStream: !!webcamStream });
+    if (STATE.isDetecting) {
+        return; // Already running a detection
+    }
+    
+    if (!DOM.cameraFeed || !webcamStream || !webcamStream.active) {
+        // Camera not ready, watchdog will reconnect
         return;
     }
     
     const video = DOM.cameraFeed;
     if (video.readyState < 2) {
-        console.log('Video not ready:', video.readyState);
+        // Video not ready yet, will retry on next interval
         return;
     }
     
     STATE.isDetecting = true;
-    console.log('Running detection...');
     
     try {
-        // Capture frame from video
+        // Capture frame from video at reduced resolution for faster processing
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        // Use 640x480 for fast detection instead of full resolution
+        const targetWidth = 640;
+        const targetHeight = 480;
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0);
+        ctx.drawImage(video, 0, 0, targetWidth, targetHeight);
         
-        // Convert to base64
-        const imageData = canvas.toDataURL('image/jpeg', 0.8);
+        // Convert to base64 with lower quality for faster transfer
+        const imageData = canvas.toDataURL('image/jpeg', 0.6);
         
         // Send to backend for detection
         const response = await fetch(`${CONFIG.API_BASE}/api/detect`, {
@@ -331,9 +595,8 @@ function handleDetectionResult(result) {
     // Update mini radar
     updateRadar(detections);
     
-    // Update premium analytics
+    // Update environment badge
     if (detections && detections.length > 0) {
-        updateAnalytics(detections);
         updateEnvironmentBadge();
     }
     
@@ -349,12 +612,15 @@ function drawDetections(detections) {
     const video = DOM.cameraFeed;
     if (!video) return;
     
-    // Resize canvas to match video
+    // Resize canvas to match video display
     detectionCanvas.width = video.offsetWidth;
     detectionCanvas.height = video.offsetHeight;
     
-    const scaleX = detectionCanvas.width / video.videoWidth;
-    const scaleY = detectionCanvas.height / video.videoHeight;
+    // Detection was done on 640x480 image, scale bboxes from that size
+    const DETECTION_WIDTH = 640;
+    const DETECTION_HEIGHT = 480;
+    const scaleX = detectionCanvas.width / DETECTION_WIDTH;
+    const scaleY = detectionCanvas.height / DETECTION_HEIGHT;
     
     // Clear previous drawings
     detectionCtx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
@@ -1689,10 +1955,6 @@ function init() {
     STATE.pollingTimer = setInterval(fetchStatus, CONFIG.POLL_INTERVAL);
     setInterval(fetchGPS, CONFIG.POLL_INTERVAL * 2);
 
-    // Premium: Update session timer and analytics every second
-    setInterval(updateSessionTimer, 1000);
-    setInterval(updateSafetyScore, 500);
-
     // Initial render
     renderHistory();
 }
@@ -1738,133 +2000,8 @@ function initPremiumFeatures() {
         });
     }
 
-    // Alert range toggle (both old and new selectors)
-    document.querySelectorAll('.toggle-btn[data-range], .dropdown-toggle[data-range]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.toggle-btn[data-range], .dropdown-toggle[data-range]').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            STATE.alertRange = btn.dataset.range;
-        });
-    });
-
     // Initial environment detection
     updateEnvironmentBadge();
-    updateAnalyticsDisplay();
-}
-
-function updateSessionTimer() {
-    const elapsed = Date.now() - STATE.sessionStart;
-    const hours = Math.floor(elapsed / 3600000);
-    const minutes = Math.floor((elapsed % 3600000) / 60000);
-    const seconds = Math.floor((elapsed % 60000) / 1000);
-    const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    
-    const timerEl = document.getElementById('session-time');
-    if (timerEl) timerEl.textContent = timeStr;
-}
-
-function updateSafetyScore() {
-    const detections = STATE.lastDetections || [];
-    let score = 100;
-    let label = 'SAFE';
-    
-    // Calculate safety based on current detections
-    for (const det of detections) {
-        const dist = det.distance_m || 10;
-        const isApproaching = det.movement?.approaching === true;
-        const isPerson = det.class === 'person';
-        const isVehicle = ['car', 'bicycle', 'motorcycle', 'bus', 'truck'].includes(det.class);
-        
-        // Proximity penalty
-        if (dist <= 1.0) score -= 35;
-        else if (dist <= 2.0) score -= 20;
-        else if (dist <= 3.0) score -= 10;
-        
-        // Approaching penalty
-        if (isApproaching) score -= 15;
-        
-        // Person/vehicle penalty
-        if ((isPerson || isVehicle) && dist <= 3.0) score -= 10;
-    }
-    
-    score = Math.max(0, Math.min(100, score));
-    STATE.safetyScore = score;
-    
-    if (score < 40) label = 'DANGER';
-    else if (score < 70) label = 'CAUTION';
-    
-    // Update UI
-    const scoreEl = document.getElementById('safety-score');
-    const labelEl = document.querySelector('.safety-label');
-    const ringEl = document.getElementById('safety-ring');
-    const progressEl = document.getElementById('safety-progress');
-    
-    if (scoreEl) scoreEl.textContent = Math.round(score);
-    if (labelEl) labelEl.textContent = label;
-    
-    // Update ring progress (circumference = 2 * PI * 45 = 283)
-    if (progressEl) {
-        const offset = 283 - (283 * score / 100);
-        progressEl.style.strokeDashoffset = offset;
-    }
-    
-    // Update ring color class
-    if (ringEl) {
-        ringEl.classList.remove('warning', 'danger');
-        if (score < 40) ringEl.classList.add('danger');
-        else if (score < 70) ringEl.classList.add('warning');
-    }
-}
-
-function updateAnalytics(detections) {
-    if (!detections || detections.length === 0) return;
-    
-    STATE.totalDetections += detections.length;
-    
-    for (const det of detections) {
-        if (det.alert_level === 'CRITICAL') STATE.dangerAlerts++;
-        if (det.class === 'person') STATE.personsDetected++;
-        if (['car', 'bicycle', 'motorcycle', 'bus', 'truck'].includes(det.class)) STATE.vehiclesDetected++;
-    }
-    
-    // Update timeline (shift and add new count)
-    STATE.detectionTimeline.shift();
-    STATE.detectionTimeline.push(detections.length);
-    
-    updateAnalyticsDisplay();
-}
-
-function updateAnalyticsDisplay() {
-    const totalEl = document.getElementById('total-detections');
-    const dangerEl = document.getElementById('danger-count');
-    const personsEl = document.getElementById('persons-detected');
-    const vehiclesEl = document.getElementById('vehicles-detected');
-    
-    // Update panel analytics
-    if (totalEl) totalEl.textContent = STATE.totalDetections;
-    if (dangerEl) dangerEl.textContent = STATE.dangerAlerts;
-    if (personsEl) personsEl.textContent = STATE.personsDetected;
-    if (vehiclesEl) vehiclesEl.textContent = STATE.vehiclesDetected;
-    
-    // Header analytics removed
-    // const headerDetections = document.getElementById('header-detections');
-    // const headerAlerts = document.getElementById('header-alerts');
-    // const headerPersons = document.getElementById('header-persons');
-    // const headerVehicles = document.getElementById('header-vehicles');
-    // 
-    // if (headerDetections) headerDetections.textContent = STATE.totalDetections;
-    // if (headerAlerts) headerAlerts.textContent = STATE.dangerAlerts;
-    // if (headerPersons) headerPersons.textContent = STATE.personsDetected;
-    // if (headerVehicles) headerVehicles.textContent = STATE.vehiclesDetected;
-    
-    // Update chart bars
-    const maxVal = Math.max(...STATE.detectionTimeline, 1);
-    const bars = document.querySelectorAll('.chart-bar');
-    bars.forEach((bar, i) => {
-        const height = (STATE.detectionTimeline[i] / maxVal) * 100;
-        bar.style.height = `${Math.max(4, height)}%`;
-        bar.classList.toggle('active', i === bars.length - 1);
-    });
 }
 
 function updateEnvironmentBadge() {
