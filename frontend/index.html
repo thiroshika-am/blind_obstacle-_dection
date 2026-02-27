@@ -10,6 +10,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="style.css">
+    <script>
+        // Authentication check - redirect to login if not authenticated
+        (function() {
+            const token = localStorage.getItem('authToken');
+            if (!token) {
+                window.location.href = 'login.html';
+            }
+        })();
+    </script>
 </head>
 <body>
     <!-- Loading Screen -->
@@ -66,6 +75,11 @@
                 
                 <!-- Settings Button -->
                 <div class="header-settings">
+                    <button class="logout-btn" id="logout-btn" title="Logout" aria-label="Logout">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 4l4 4m0 0l-4 4m4-4H9m7 7v2a2 2 0 0 1-2 2h-2"/>
+                        </svg>
+                    </button>
                     <button class="settings-toggle" id="header-settings-btn" title="Settings">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="3"/>
@@ -321,5 +335,12 @@
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="app.js"></script>
+    <script>
+        // FAILSAFE: Force hide loading screen after 4 seconds no matter what
+        setTimeout(function() {
+            var ls = document.getElementById('loading-screen');
+            if (ls) { ls.style.display = 'none'; }
+        }, 4000);
+    </script>
 </body>
 </html>

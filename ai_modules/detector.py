@@ -22,7 +22,6 @@ MODEL_PATH = os.path.join(MODEL_DIR, "yolov8n.pt")
 # Auto-detect GPU
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-
 class ObjectDetector:
     """YOLO-based object detector for obstacle detection"""
     

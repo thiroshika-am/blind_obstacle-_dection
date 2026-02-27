@@ -12,8 +12,7 @@ const LoadingScreen = {
     progressFill: null,
     progressPercentage: null,
     messageItems: null,
-    currentMessageIndex: 0,
-    hideTimeout: null,
+    progressInterval: null,
 
     init() {
         this.screen = document.getElementById('loading-screen');
@@ -21,76 +20,55 @@ const LoadingScreen = {
         this.progressPercentage = document.querySelector('.progress-percentage');
         this.messageItems = document.querySelectorAll('.message-item');
         
-        // Start the loading sequence
-        this.startLoadingSequence();
+        if (!this.screen) return;
         
-        // Hide loading screen after 5 seconds
-        this.scheduleHide(5000);
-    },
-
-    startLoadingSequence() {
-        let currentProgress = 0;
-        let currentMessage = 0;
-
-        const progressInterval = setInterval(() => {
-            currentProgress += Math.random() * 40;
-            if (currentProgress > 90) currentProgress = 90; // Cap at 90% until completion
-
-            this.updateProgress(currentProgress);
-
-            if (Math.random() > 0.6 && currentMessage < this.messageItems.length) {
-                this.showMessage(currentMessage);
-                currentMessage++;
+        // Animate progress from 0 to 100 over 3 seconds
+        let progress = 0;
+        let msgIdx = 0;
+        const self = this;
+        
+        this.progressInterval = setInterval(function() {
+            progress += 5 + Math.random() * 15;
+            if (progress > 100) progress = 100;
+            
+            if (self.progressFill) self.progressFill.style.width = progress + '%';
+            if (self.progressPercentage) self.progressPercentage.textContent = Math.round(progress) + '%';
+            
+            if (msgIdx < self.messageItems.length) {
+                self.messageItems[msgIdx].style.opacity = '1';
+                msgIdx++;
             }
-        }, 800);
-
-        // Store interval ID for cleanup
-        this.progressInterval = progressInterval;
-    },
-
-    updateProgress(percentage) {
-        percentage = Math.min(percentage, 100);
-        if (this.progressFill) {
-            this.progressFill.style.width = percentage + '%';
-        }
-        if (this.progressPercentage) {
-            this.progressPercentage.textContent = Math.round(percentage) + '%';
-        }
-    },
-
-    showMessage(index) {
-        if (this.messageItems[index]) {
-            this.messageItems[index].style.opacity = '1';
-            this.messageItems[index].style.animation = 'slideInMessage 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards';
-        }
-    },
-
-    scheduleHide(delay) {
-        clearTimeout(this.hideTimeout);
-        this.hideTimeout = setTimeout(() => {
-            this.complete();
-        }, delay);
-    },
-
-    complete() {
-        // Complete the progress bar
-        this.updateProgress(100);
+            
+            if (progress >= 100) {
+                clearInterval(self.progressInterval);
+                // Hide after reaching 100%
+                setTimeout(function() {
+                    self.forceHide();
+                }, 400);
+            }
+        }, 300);
         
-        // Clear the progress interval
+        // Absolute failsafe: hide after 3.5 seconds no matter what
+        setTimeout(function() { self.forceHide(); }, 3500);
+    },
+
+    forceHide() {
         if (this.progressInterval) {
             clearInterval(this.progressInterval);
+            this.progressInterval = null;
         }
-
-        // Hide loading screen after completion animation
-        setTimeout(() => {
-            if (this.screen) {
-                this.screen.classList.add('hidden');
-            }
-        }, 500);
+        if (this.screen) {
+            this.screen.style.display = 'none';
+            this.screen.classList.add('hidden');
+        }
     },
 
     hide() {
-        this.complete();
+        this.forceHide();
+    },
+
+    complete() {
+        this.forceHide();
     }
 };
 
@@ -112,8 +90,8 @@ const CONFIG = {
     POLL_INTERVAL: 3000,
     STREAM_RETRY_INTERVAL: 5000,
     DETECTION_HISTORY_MAX: 10,
-    DETECTION_INTERVAL: 100, // Run detection every 100ms for fast real-time tracking
-    OCR_INTERVAL: 2000, // Run OCR every 2 seconds (text doesn't change as fast)
+    DETECTION_INTERVAL: 3000, // Increased from 100ms to 3 seconds - CPU processing takes time
+    OCR_INTERVAL: 5000, // Increased from 2000ms to 5 seconds - EasyOCR is slow on CPU
 };
 
 const STATE = {
@@ -191,30 +169,49 @@ async function connectCameraStream() {
     const feed = DOM.cameraFeed;
     const overlay = DOM.cameraOverlay;
 
-    console.log('Attempting camera connection...', { feed: !!feed, overlay: !!overlay });
+    console.log('[CAMERA] Attempting camera connection...', { feed: !!feed, overlay: !!overlay });
     if (!feed || !overlay) {
-        console.error('Missing camera elements:', { feed, overlay });
+        console.error('[CAMERA] Missing camera elements:', { feed, overlay });
         return;
     }
 
     try {
-        // Request webcam access
-        console.log('Requesting webcam access...');
-        webcamStream = await navigator.mediaDevices.getUserMedia({
+        // Check HTTPS/localhost requirement
+        if (location.protocol !== 'http:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+            throw new Error('Camera requires HTTPS or localhost');
+        }
+
+        // Check if camera API is available
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Camera API not available');
+        }
+
+        // Request webcam access with timeout
+        console.log('[CAMERA] Requesting webcam access...');
+        updateCameraOverlay('Requesting camera permission...');
+        
+        const cameraPromise = navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
-                height: { ideal: 720 },
-                facingMode: 'environment' // Use back camera on mobile
+                height: { ideal: 720 }
             },
             audio: false
         });
 
+        // Add timeout (8 seconds) for permission request
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Camera permission request timeout')), 8000)
+        );
+
+        webcamStream = await Promise.race([cameraPromise, timeoutPromise]);
+
+        console.log('[CAMERA] Stream acquired, starting playback...');
         feed.srcObject = webcamStream;
         await feed.play();
         
         overlay.classList.add('hidden');
         updateStatusLight('camera', true);
-        console.log('Webcam connected successfully');
+        console.log('[CAMERA] Webcam connected successfully');
         
         // Start AI detection after a short delay
         setTimeout(startDetection, 1000);
@@ -223,12 +220,36 @@ async function connectCameraStream() {
         startCameraWatchdog();
         
     } catch (err) {
-        console.error('Webcam error:', err.message);
-        overlay.classList.remove('hidden');
-        overlay.querySelector('p').textContent = 'Camera access denied';
+        console.error('[CAMERA] Error:', err.name, err.message);
+        
+        // Provide helpful error messages based on error type
+        let errorMsg = 'Camera access denied';
+        if (err.name === 'NotAllowedError' || err.message.includes('denied')) {
+            errorMsg = 'Camera access denied - Please allow camera in browser settings';
+        } else if (err.name === 'NotFoundError') {
+            errorMsg = 'No camera found - Connect a camera device';
+        } else if (err.name === 'NotReadableError' || err.message.includes('busy')) {
+            errorMsg = 'Camera is busy - Close other apps using camera';
+        } else if (err.message.includes('timeout')) {
+            errorMsg = 'Camera permission timeout - Click Allow if prompted';
+        } else if (err.message.includes('HTTPS')) {
+            errorMsg = 'Use http://localhost:5000 for camera access';
+        }
+        
+        updateCameraOverlay(errorMsg);
         updateStatusLight('camera', false);
-        // Retry camera connection after 3 seconds
-        setTimeout(connectCameraStream, 3000);
+        
+        // Retry camera connection after 5 seconds
+        console.log('[CAMERA] Retrying in 5 seconds...');
+        setTimeout(connectCameraStream, 5000);
+    }
+}
+
+function updateCameraOverlay(message) {
+    if (DOM.cameraOverlay) {
+        const p = DOM.cameraOverlay.querySelector('p');
+        if (p) p.textContent = message;
+        DOM.cameraOverlay.classList.remove('hidden');
     }
 }
 
@@ -335,19 +356,28 @@ async function runOCR() {
         
         const imageData = canvas.toDataURL('image/jpeg', 0.7);
         
+        console.log(`[OCR] Sending frame to ${CONFIG.API_BASE}/api/ocr, size: ${imageData.length} bytes`);
+        
         const response = await fetch(`${CONFIG.API_BASE}/api/ocr`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ image: imageData })
         });
         
-        if (!response.ok) return;
+        console.log(`[OCR] Response status: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[OCR] HTTP Error ${response.status}: ${errorText}`);
+            return;
+        }
         
         const result = await response.json();
+        console.log(`[OCR] Got result: ${result.count || 0} texts detected`);
         handleOCRResult(result);
         
     } catch (err) {
-        console.error('OCR error:', err.message);
+        console.error('[OCR] ERROR:', err.message, err);
     } finally {
         STATE.isReadingText = false;
     }
@@ -556,6 +586,9 @@ async function runDetection() {
         // Convert to base64 with lower quality for faster transfer
         const imageData = canvas.toDataURL('image/jpeg', 0.6);
         
+        // Debug log
+        console.log(`[DETECTION] Sending frame to ${CONFIG.API_BASE}/api/detect, size: ${imageData.length} bytes`);
+        
         // Send to backend for detection
         const response = await fetch(`${CONFIG.API_BASE}/api/detect`, {
             method: 'POST',
@@ -563,15 +596,22 @@ async function runDetection() {
             body: JSON.stringify({ image: imageData })
         });
         
-        if (!response.ok) throw new Error('Detection failed');
+        console.log(`[DETECTION] Response status: ${response.status}`);
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`[DETECTION] HTTP Error ${response.status}: ${errorText}`);
+            throw new Error(`Detection failed: HTTP ${response.status}`);
+        }
         
         const result = await response.json();
+        console.log(`[DETECTION] Got result: ${result.count || 0} detections`);
         
         // Update UI with detections
         handleDetectionResult(result);
         
     } catch (err) {
-        console.error('Detection error:', err.message, err);
+        console.error('[DETECTION] ERROR:', err.message, err);
         // Don't spam errors, just continue
     } finally {
         STATE.isDetecting = false;
@@ -1256,6 +1296,8 @@ function startGeolocation() {
     if (!navigator.geolocation) {
         console.warn('Geolocation not supported');
         updateStatusLight('gps', false);
+        const locationText = document.getElementById('location-text');
+        if (locationText) locationText.textContent = 'Geolocation not supported by browser';
         return;
     }
 
@@ -1265,8 +1307,8 @@ function startGeolocation() {
         handleGeolocationError,
         {
             enableHighAccuracy: true,
-            timeout: 30000,
-            maximumAge: 0,  // Always get fresh position
+            timeout: 10000,
+            maximumAge: 5000,  // Accept cached position up to 5 seconds old
         }
     );
 
@@ -1274,7 +1316,7 @@ function startGeolocation() {
     navigator.geolocation.getCurrentPosition(
         handleGeolocationSuccess,
         handleGeolocationError,
-        { enableHighAccuracy: true, timeout: 30000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
     
     // Setup locate button
@@ -1287,8 +1329,30 @@ function startGeolocation() {
 function handleGeolocationSuccess(position) {
     const { latitude, longitude, accuracy } = position.coords;
     
+    console.log(`[GPS] Location received: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${accuracy}m)`);
+    
+    // Warn if accuracy is poor
+    if (accuracy > 100) {
+        console.warn(`[WARNING] Low GPS accuracy: ${accuracy}m - This may be Wi-Fi/IP-based location`);
+    }
     updateStatusLight('gps', true);
     updateMapLocation(latitude, longitude, accuracy);
+    
+    // Update GPS source indicator with accuracy info
+    const gpsSource = document.getElementById('gps-source');
+    if (gpsSource) {
+        if (accuracy <= 20) {
+            gpsSource.textContent = `GPS: High Accuracy (±${Math.round(accuracy)}m)`;
+            gpsSource.style.color = '#10B981'; // Green
+        } else if (accuracy <= 100) {
+            gpsSource.textContent = `GPS: Medium Accuracy (±${Math.round(accuracy)}m)`;
+            gpsSource.style.color = '#F59E0B'; // Orange
+        } else {
+            gpsSource.textContent = `GPS: Low Accuracy (±${Math.round(accuracy)}m)`;
+            gpsSource.style.color = '#EF4444'; // Red
+        }
+        gpsSource.classList.remove('device-gps');
+    }
     
     // Coordinate and accuracy display removed
     // if (DOM.coordLat) DOM.coordLat.textContent = latitude.toFixed(6);
@@ -1301,6 +1365,23 @@ function handleGeolocationSuccess(position) {
 function handleGeolocationError(error) {
     console.warn('Geolocation error:', error.message);
     updateStatusLight('gps', false);
+    
+    const gpsSource = document.getElementById('gps-source');
+    const locationText = document.getElementById('location-text');
+    
+    if (error.code === 1) {
+        // Permission denied
+        if (gpsSource) gpsSource.textContent = 'GPS: Permission Denied';
+        if (locationText) locationText.textContent = 'Enable location permission';
+    } else if (error.code === 2) {
+        // Position unavailable
+        if (gpsSource) gpsSource.textContent = 'GPS: Unavailable';
+        if (locationText) locationText.textContent = 'Position unavailable';
+    } else if (error.code === 3) {
+        // Timeout
+        if (gpsSource) gpsSource.textContent = 'GPS: Timeout';
+        if (locationText) locationText.textContent = 'Location timeout';
+    }
 }
 
 function updateMapLocation(lat, lng, accuracy, zoomToFit = false) {
@@ -1388,10 +1469,10 @@ async function reverseGeocode(lat, lng) {
             const locationText = document.getElementById('location-text');
             if (locationText) locationText.textContent = 'Finding location...';
             
-            // Use OpenStreetMap Nominatim (free, no API key)
+            // Use OpenStreetMap Nominatim (free, no API key) with better zoom level
             const response = await fetch(
-                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18`,
-                { headers: { 'Accept-Language': 'en' } }
+                `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=16&addressdetails=1`,
+                { headers: { 'Accept-Language': 'en', 'User-Agent': 'VisionX/1.0' } }
             );
             
             if (!response.ok) throw new Error('Geocoding failed');
@@ -1403,32 +1484,50 @@ async function reverseGeocode(lat, lng) {
                 const address = data.address;
                 let locationName = '';
                 
-                // Priority: specific place > road > area > city
-                if (address.amenity) locationName = address.amenity;
-                else if (address.building) locationName = address.building;
-                else if (address.leisure) locationName = address.leisure;
-                else if (address.shop) locationName = address.shop;
-                else if (address.road) locationName = address.road;
-                else if (address.neighbourhood) locationName = address.neighbourhood;
-                else if (address.suburb) locationName = address.suburb;
-                
-                // Add area/city for context
-                const area = address.suburb || address.neighbourhood || address.city_district || '';
-                const city = address.city || address.town || address.village || '';
-                
-                if (locationName && area && area !== locationName) {
-                    locationName += `, ${area}`;
-                } else if (locationName && city) {
-                    locationName += `, ${city}`;
-                } else if (!locationName && area) {
-                    locationName = area + (city ? `, ${city}` : '');
-                } else if (!locationName && city) {
-                    locationName = city;
-                } else if (!locationName) {
-                    locationName = data.display_name?.split(',').slice(0, 2).join(', ') || 'Unknown location';
+                // Priority order for better accuracy: road > neighborhood > suburb > city
+                if (address.road) {
+                    locationName = address.road;
+                    // Add house number if available
+                    if (address.house_number) {
+                        locationName = `${address.house_number} ${locationName}`;
+                    }
+                } else if (address.pedestrian) {
+                    locationName = address.pedestrian;
+                } else if (address.footway) {
+                    locationName = address.footway;
+                } else if (address.amenity) {
+                    locationName = address.amenity;
+                } else if (address.neighbourhood || address.suburb) {
+                    locationName = address.neighbourhood || address.suburb;
+                } else if (address.city_district) {
+                    locationName = address.city_district;
                 }
                 
-                if (locationText) locationText.textContent = locationName;
+                // Add city/town for context
+                const city = address.city || address.town || address.village || address.county || '';
+                const state = address.state || '';
+                
+                if (locationName && city) {
+                    locationName += `, ${city}`;
+                } else if (locationName && state) {
+                    locationName += `, ${state}`;
+                } else if (!locationName && city) {
+                    locationName = city;
+                    if (state) locationName += `, ${state}`;
+                } else if (!locationName) {
+                    // Fallback to display_name but limit to first 3 parts
+                    locationName = data.display_name?.split(',').slice(0, 3).join(', ') || 'Unknown location';
+                }
+                
+                if (locationText) {
+                    locationText.textContent = locationName;
+                    locationText.title = `LAT: ${lat.toFixed(6)}, LNG: ${lng.toFixed(6)}\nAccuracy: Check GPS indicator above\nFull: ${data.display_name}`;
+                    
+                    // Log for debugging
+                    console.log(`[GPS] Location: ${locationName}`);
+                    console.log(`    [Coords] ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+                    console.log(`    [Address] ${data.display_name}`);
+                }
                 
                 lastGeocodedLat = lat;
                 lastGeocodedLng = lng;
@@ -1436,7 +1535,11 @@ async function reverseGeocode(lat, lng) {
         } catch (err) {
             console.warn('Reverse geocoding error:', err);
             const locationText = document.getElementById('location-text');
-            if (locationText) locationText.textContent = 'Location unavailable';
+            if (locationText) {
+                locationText.textContent = `${lat.toFixed(5)}°N, ${lng.toFixed(5)}°E`;
+                locationText.title = `Coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}\nAddress lookup failed - showing coordinates`;
+                console.log(`[GPS] Showing coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+            }
         }
     }, 1000);  // Wait 1s before geocoding to avoid spam
 }
@@ -1913,50 +2016,110 @@ function escapeHtml(text) {
 }
 
 // ============================================
+// AUTHENTICATION
+// ============================================
+
+async function handleLogout() {
+    try {
+        const token = localStorage.getItem('authToken');
+        
+        if (token) {
+            // Notify backend of logout
+            await fetch(`${CONFIG.API_BASE}/api/logout`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            }).catch(() => {});
+        }
+        
+        // Clear local storage
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('username');
+        
+        // Redirect to login
+        window.location.href = 'login.html';
+    } catch (err) {
+        console.error('Logout error:', err);
+        // Force redirect even if there's an error
+        localStorage.removeItem('authToken');
+        localStorage.removeItem('username');
+        window.location.href = 'login.html';
+    }
+}
+
+// ============================================
 // INITIALIZATION
 // ============================================
 
 function init() {
-    console.log('%c👁️ VisionX PRO Dashboard v2.0', 'color: #00D4FF; font-weight: bold; font-size: 14px; text-shadow: 0 0 10px rgba(0,212,255,0.5);');
+    console.log('%c[VisionX] PRO Dashboard v2.0', 'color: #00D4FF; font-weight: bold; font-size: 14px; text-shadow: 0 0 10px rgba(0,212,255,0.5);');
+    console.log('[INIT] Starting initialization...');
 
-    // Initialize DOM references first
-    initDOMRefs();
+    try {
+        // Initialize DOM references first
+        initDOMRefs();
+        console.log('[INIT] DOM refs initialized');
 
-    // Set initial cap connection state
-    updateCapConnection(false, 'Checking...');
+        // Set initial cap connection state
+        updateCapConnection(false, 'Checking...');
 
-    connectCameraStream();
-    initMap();
-    initVoice();
-    initPremiumFeatures();
-
-    // Event listeners
-    document.getElementById('btn-reconnect')?.addEventListener('click', () => {
-        stopWebcam();
-        DOM.cameraOverlay?.classList.remove('hidden');
-        if (DOM.cameraOverlay) {
-            DOM.cameraOverlay.querySelector('p').textContent = 'Reconnecting...';
+        // Start camera in background (don't wait for it)
+        console.log('[INIT] Starting camera connection...');
+        connectCameraStream().catch(err => console.error('[INIT] Camera error:', err));
+        
+        // Hide loading screen now that dashboard is visible
+        if (LoadingScreen.screen) {
+            LoadingScreen.screen.classList.add('hidden');
+            console.log('[INIT] Loading screen hidden');
         }
-        connectCameraStream();
-    });
+        
+        // Initialize other features in parallel (non-blocking)
+        console.log('[INIT] Starting background services...');
+        initMap();
+        startGeolocation();
+        initVoice();
+        initPremiumFeatures();
 
-    document.getElementById('btn-fullscreen')?.addEventListener('click', toggleFullscreen);
+        // Event listeners
+        document.getElementById('btn-reconnect')?.addEventListener('click', () => {
+            stopWebcam();
+            DOM.cameraOverlay?.classList.remove('hidden');
+            if (DOM.cameraOverlay) {
+                DOM.cameraOverlay.querySelector('p').textContent = 'Reconnecting...';
+            }
+            connectCameraStream();
+        });
 
-    document.addEventListener('keydown', e => {
-        if (e.key === 'Escape') {
-            const panel = document.querySelector('.camera-panel');
-            if (panel?.style.position === 'fixed') toggleFullscreen();
+        document.getElementById('btn-fullscreen')?.addEventListener('click', toggleFullscreen);
+
+        document.getElementById('logout-btn')?.addEventListener('click', handleLogout);
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                const panel = document.querySelector('.camera-panel');
+                if (panel?.style.position === 'fixed') toggleFullscreen();
+            }
+        });
+
+        // Polling
+        console.log('[INIT] Starting polling...');
+        fetchStatus();
+        fetchGPS();
+        STATE.pollingTimer = setInterval(fetchStatus, CONFIG.POLL_INTERVAL);
+        setInterval(fetchGPS, CONFIG.POLL_INTERVAL * 2);
+
+        // Initial render
+        renderHistory();
+        
+        console.log('[INIT] Initialization complete!');
+    } catch (err) {
+        console.error('[INIT] CRITICAL ERROR:', err);
+        // Force hide loading screen even on error
+        if (LoadingScreen.screen) {
+            LoadingScreen.screen.classList.add('hidden');
         }
-    });
-
-    // Polling
-    fetchStatus();
-    fetchGPS();
-    STATE.pollingTimer = setInterval(fetchStatus, CONFIG.POLL_INTERVAL);
-    setInterval(fetchGPS, CONFIG.POLL_INTERVAL * 2);
-
-    // Initial render
-    renderHistory();
+    }
 }
 
 // ============================================

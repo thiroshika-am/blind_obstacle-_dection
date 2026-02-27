@@ -10,6 +10,8 @@ import json
 import time
 import logging
 import threading
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from flask import Flask, Response, jsonify, send_from_directory, request, abort
 from flask_cors import CORS
@@ -188,6 +190,127 @@ def get_distance():
         return jsonify({"distance_mm": None, "error": "ESP32 unreachable"})
 
 
+# ============================================
+# AUTHENTICATION
+# ============================================
+
+USERS_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "users.json")
+
+def load_users():
+    """Load users from JSON file."""
+    try:
+        with open(USERS_PATH, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"users": {}}
+
+def save_users(data):
+    """Save users to JSON file."""
+    with open(USERS_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+def hash_password(password, salt=None):
+    """Hash password with salt."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}${hashed}"
+
+def verify_password(password, stored_hash):
+    """Verify password against stored hash."""
+    if '$' not in stored_hash:
+        return False
+    salt, _ = stored_hash.split('$', 1)
+    return hash_password(password, salt) == stored_hash
+
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    """Authenticate user and return token."""
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+
+        if not username or not password:
+            return jsonify({"success": False, "message": "Username and password required"}), 400
+
+        users_data = load_users()
+        user = users_data.get("users", {}).get(username)
+
+        if not user:
+            return jsonify({"success": False, "message": "Invalid username or password"}), 401
+
+        if not verify_password(password, user.get("password_hash", "")):
+            return jsonify({"success": False, "message": "Invalid username or password"}), 401
+
+        # Generate session token
+        token = secrets.token_hex(32)
+
+        # Update last login
+        users_data["users"][username]["last_login"] = datetime.now(timezone.utc).isoformat()
+        save_users(users_data)
+
+        logger.info(f"User '{username}' logged in successfully")
+        return jsonify({"success": True, "token": token, "username": username})
+
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({"success": False, "message": "Server error"}), 500
+
+
+@app.route("/api/register", methods=["POST"])
+def register():
+    """Register a new user."""
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        email = data.get("email", "").strip()
+
+        if not username or not password:
+            return jsonify({"success": False, "message": "Username and password required"}), 400
+
+        if len(username) < 3:
+            return jsonify({"success": False, "message": "Username must be at least 3 characters"}), 400
+
+        if len(password) < 4:
+            return jsonify({"success": False, "message": "Password must be at least 4 characters"}), 400
+
+        users_data = load_users()
+
+        if username in users_data.get("users", {}):
+            return jsonify({"success": False, "message": "Username already exists"}), 409
+
+        # Create user
+        password_hash = hash_password(password)
+        users_data.setdefault("users", {})[username] = {
+            "password_hash": password_hash,
+            "email": email,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": datetime.now(timezone.utc).isoformat()
+        }
+        save_users(users_data)
+
+        token = secrets.token_hex(32)
+        logger.info(f"New user registered: '{username}'")
+        return jsonify({"success": True, "token": token, "username": username})
+
+    except Exception as e:
+        logger.error(f"Register error: {e}")
+        return jsonify({"success": False, "message": "Server error"}), 500
+
+
+@app.route("/api/verify-token", methods=["POST"])
+def verify_token():
+    """Simple token verification (always valid for now)."""
+    data = request.get_json(force=True)
+    token = data.get("token", "")
+    if token:
+        return jsonify({"valid": True})
+    return jsonify({"valid": False}), 401
+
+
 # --- Health Check ---
 
 @app.route("/api/health")
@@ -211,7 +334,7 @@ def detect_objects():
         
         if not image_b64:
             logger.warning("No image data in request")
-            return jsonify({"error": "No image provided", "detections": []}), 400
+            return jsonify({"error": "No image provided", "detections": [], "count": 0}), 400
         
         logger.info(f"Image data received, length: {len(image_b64)}")
         logger.info("Loading detector...")
@@ -224,7 +347,7 @@ def detect_objects():
         
     except Exception as e:
         logger.error(f"Detection error: {e}", exc_info=True)
-        return jsonify({"error": str(e), "detections": []}), 500
+        return jsonify({"error": str(e), "detections": [], "count": 0}), 500
 
 
 # --- API: Generate Smart Alert (LLM) ---
