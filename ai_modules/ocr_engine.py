@@ -61,29 +61,38 @@ class OCREngine:
             print("EasyOCR not available - OCR disabled")
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
-        """Preprocess image for better OCR results."""
+        """Preprocess image for better OCR results, especially small/distant text."""
+        # Upscale small images for better small-text detection
+        h, w = image.shape[:2]
+        if max(h, w) < 1280:
+            scale = 1280 / max(h, w)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        
         # Convert to grayscale if needed
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         else:
             gray = image
         
-        # Apply adaptive thresholding for better text contrast
-        # This helps with varying lighting conditions
-        processed = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-            cv2.THRESH_BINARY, 11, 2
-        )
+        # Apply CLAHE for better contrast (helps with distant text)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
         
-        return processed
+        # Sharpen to improve edge definition of small text
+        kernel = np.array([[-1, -1, -1],
+                           [-1,  9, -1],
+                           [-1, -1, -1]])
+        sharpened = cv2.filter2D(enhanced, -1, kernel)
+        
+        return sharpened
     
-    def detect_from_base64(self, image_b64: str, min_confidence: float = 0.3) -> Dict:
+    def detect_from_base64(self, image_b64: str, min_confidence: float = 0.4) -> Dict:
         """
         Detect text from base64 encoded image.
         
         Args:
             image_b64: Base64 encoded image (with or without data URI prefix)
-            min_confidence: Minimum confidence threshold (lowered for better detection)
+            min_confidence: Minimum confidence threshold
             
         Returns:
             Dict with detected text, bounding boxes, and confidence
@@ -106,13 +115,13 @@ class OCREngine:
         except Exception as e:
             return {"texts": [], "error": str(e)}
     
-    def detect(self, frame: np.ndarray, min_confidence: float = 0.3) -> Dict:
+    def detect(self, frame: np.ndarray, min_confidence: float = 0.4) -> Dict:
         """
         Detect text in an image frame.
         
         Args:
             frame: OpenCV image (BGR format)
-            min_confidence: Minimum confidence threshold (lowered for better detection)
+            min_confidence: Minimum confidence threshold
             
         Returns:
             Dict with detected texts and their locations
@@ -121,8 +130,25 @@ class OCREngine:
             return {"texts": [], "error": "OCR not available"}
         
         try:
-            # Run OCR detection
-            results = self.reader.readtext(frame)
+            h, w = frame.shape[:2]
+            
+            # Gentle upscale only if very small — avoid creating artifacts
+            if max(h, w) < 800:
+                scale = 800 / max(h, w)
+                frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            
+            # Mild CLAHE — just enough to help contrast without amplifying noise
+            lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
+            l = clahe.apply(l)
+            enhanced = cv2.merge([l, a, b])
+            frame_enhanced = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+            
+            # NO sharpening — it creates false text from edges/textures
+            
+            # Run OCR with per-word results (paragraph=False) so we get real confidence scores
+            results = self.reader.readtext(frame_enhanced, paragraph=False, min_size=10, text_threshold=0.6)
             
             texts = []
             full_text_parts = []
@@ -171,20 +197,42 @@ class OCREngine:
             return {"texts": [], "error": str(e)}
     
     def _clean_text(self, text: str) -> str:
-        """Clean and normalize detected text."""
+        """Clean and normalize detected text, filter out garbage."""
         if not text:
             return ""
         
         # Remove excessive whitespace
         text = " ".join(text.split())
         
-        # Remove very short strings (likely noise)
-        if len(text) < 2:
+        # Collapse spaced-out single letters into words
+        # e.g. "H E L L O" -> "HELLO", "W O R L D" -> "WORLD"
+        text = re.sub(
+            r'\b((?:[A-Za-z0-9] ){2,}[A-Za-z0-9])\b',
+            lambda m: m.group(0).replace(' ', ''),
+            text
+        )
+        
+        # Remove strings that are only special characters/punctuation
+        if re.match(r'^[^\w]+$', text):
             return ""
         
-        # Remove strings that are only special characters
-        if re.match(r'^[^\w\s]+$', text):
+        # Filter out strings that are mostly non-alphanumeric (likely noise)
+        alnum_count = sum(1 for c in text if c.isalnum())
+        if len(text) > 0 and alnum_count / len(text) < 0.4:
             return ""
+        
+        # Filter out random character soup — require at least one vowel or digit
+        # in words 3+ chars (pure consonant strings are usually garbage)
+        words = text.split()
+        valid_words = []
+        for word in words:
+            if len(word) <= 2:
+                valid_words.append(word)
+            elif re.search(r'[aeiouAEIOU0-9]', word):
+                valid_words.append(word)
+            # else: skip consonant-only garbage like "brk", "xzq"
+        
+        text = " ".join(valid_words)
         
         return text.strip()
     

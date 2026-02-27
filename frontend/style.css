@@ -850,6 +850,7 @@ textarea {
 .camera-overlay.hidden {
     opacity: 0;
     pointer-events: none;
+    display: none !important;
 }
 
 .spinner {
@@ -904,6 +905,26 @@ textarea {
 .icon-btn svg {
     width: 18px;
     height: 18px;
+}
+
+/* Camera Access Button — green accent */
+.cam-access-btn {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.15) 100%);
+    border-color: rgba(16, 185, 129, 0.5);
+    color: #10B981;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+}
+
+.cam-access-btn:hover {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(5, 150, 105, 0.25) 100%);
+    border-color: rgba(16, 185, 129, 0.7);
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4), 0 0 30px rgba(16, 185, 129, 0.15);
+}
+
+.cam-access-btn.active {
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.4) 0%, rgba(5, 150, 105, 0.3) 100%);
+    border-color: #10B981;
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
 }
 
 /* ============================================
@@ -2150,6 +2171,39 @@ textarea {
     color: var(--primary) !important;
 }
 
+/* Leaflet layer control - dark theme */
+.leaflet-control-layers {
+    background: rgba(15, 23, 42, 0.95) !important;
+    border: 1px solid rgba(0, 212, 255, 0.3) !important;
+    border-radius: 10px !important;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 10px rgba(0, 212, 255, 0.1) !important;
+    color: #e2e8f0 !important;
+}
+
+.leaflet-control-layers-toggle {
+    background-color: rgba(15, 23, 42, 0.95) !important;
+    border: 1px solid rgba(0, 212, 255, 0.3) !important;
+    border-radius: 8px !important;
+    width: 36px !important;
+    height: 36px !important;
+}
+
+.leaflet-control-layers-expanded {
+    padding: 8px 12px !important;
+}
+
+.leaflet-control-layers label {
+    color: #e2e8f0 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-size: 0.85rem !important;
+    padding: 3px 0;
+}
+
+.leaflet-control-layers-separator {
+    border-top-color: rgba(0, 212, 255, 0.2) !important;
+}
+
 /* Pulsing location marker */
 .pulsing-marker {
     position: relative;
@@ -2918,6 +2972,9 @@ textarea {
 /* Header Settings */
 .header-settings {
     position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .settings-toggle {
@@ -2961,7 +3018,6 @@ textarea {
     cursor: pointer;
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
-    margin-right: 10px;
 }
 
 .logout-btn:hover {

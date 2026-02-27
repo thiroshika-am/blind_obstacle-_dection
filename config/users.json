@@ -11,6 +11,12 @@
       "email": "thiroshikaam@gmail.com",
       "created_at": "2026-02-18T15:26:34.033596+00:00",
       "last_login": "2026-02-27T05:52:29.656808+00:00"
+    },
+    "gurupriya": {
+      "password_hash": "bf9811d66d0189b48f95515c6a806335$7e89546988c2e3df7e9b57e3b44bb60abea534ff83f1dd8326c43f7ccbd94440",
+      "email": "gurupriyaps14@gmail.com",
+      "created_at": "2026-02-27T07:26:36.716656+00:00",
+      "last_login": "2026-02-27T07:26:37.225868+00:00"
     }
   }
 }
