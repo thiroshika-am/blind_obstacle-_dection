@@ -18,6 +18,8 @@ import threading
 import base64
 import random
 import re
+import hashlib
+import secrets
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Optional
 from io import BytesIO
@@ -985,13 +987,156 @@ document.readyState === 'loading'
 # FLASK APP
 # ============================================
 
-app = Flask(__name__)
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+USERS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "users.json")
+
+app = Flask(__name__, static_folder=FRONTEND_DIR)
 CORS(app)
+
+
+# --- Serve Frontend ---
 
 @app.route("/")
 def serve_index():
-    """Serve embedded HTML frontend."""
-    return FRONTEND_HTML
+    """Serve the frontend index.html."""
+    from flask import send_from_directory
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_static(path):
+    """Serve static frontend files (login.html, style.css, app.js, etc.)."""
+    if path.startswith("api/"):
+        abort(404)
+    from flask import send_from_directory
+    return send_from_directory(FRONTEND_DIR, path)
+
+
+# --- Authentication Helpers ---
+
+def load_users():
+    """Load users from JSON file."""
+    try:
+        with open(USERS_PATH, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {"users": {}}
+
+def save_users(data):
+    """Save users to JSON file."""
+    with open(USERS_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+
+def hash_password(password, salt=None):
+    """Hash password with salt."""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.sha256((salt + password).encode()).hexdigest()
+    return f"{salt}${hashed}"
+
+def verify_password(password, stored_hash):
+    """Verify password against stored hash."""
+    if '$' not in stored_hash:
+        return False
+    salt, _ = stored_hash.split('$', 1)
+    return hash_password(password, salt) == stored_hash
+
+
+# --- Auth API Endpoints ---
+
+@app.route("/api/login", methods=["POST"])
+def login():
+    """Authenticate user and return token."""
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+
+        if not username or not password:
+            return jsonify({"success": False, "message": "Username and password required"}), 400
+
+        users_data = load_users()
+        user = users_data.get("users", {}).get(username)
+
+        if not user:
+            return jsonify({"success": False, "message": "Invalid username or password"}), 401
+
+        if not verify_password(password, user.get("password_hash", "")):
+            return jsonify({"success": False, "message": "Invalid username or password"}), 401
+
+        # Generate session token
+        token = secrets.token_hex(32)
+
+        # Update last login
+        users_data["users"][username]["last_login"] = datetime.now(timezone.utc).isoformat()
+        save_users(users_data)
+
+        logger.info(f"User '{username}' logged in successfully")
+        return jsonify({"success": True, "token": token, "username": username})
+
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        return jsonify({"success": False, "message": "Server error"}), 500
+
+
+@app.route("/api/register", methods=["POST"])
+def register():
+    """Register a new user."""
+    try:
+        data = request.get_json(force=True)
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        email = data.get("email", "").strip()
+
+        if not username or not password:
+            return jsonify({"success": False, "message": "Username and password required"}), 400
+
+        if len(username) < 3:
+            return jsonify({"success": False, "message": "Username must be at least 3 characters"}), 400
+
+        if len(password) < 4:
+            return jsonify({"success": False, "message": "Password must be at least 4 characters"}), 400
+
+        users_data = load_users()
+
+        if username in users_data.get("users", {}):
+            return jsonify({"success": False, "message": "Username already exists"}), 409
+
+        # Create user
+        password_hash = hash_password(password)
+        users_data.setdefault("users", {})[username] = {
+            "password_hash": password_hash,
+            "email": email,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "last_login": datetime.now(timezone.utc).isoformat()
+        }
+        save_users(users_data)
+
+        token = secrets.token_hex(32)
+        logger.info(f"New user registered: '{username}'")
+        return jsonify({"success": True, "token": token, "username": username})
+
+    except Exception as e:
+        logger.error(f"Register error: {e}")
+        return jsonify({"success": False, "message": "Server error"}), 500
+
+
+@app.route("/api/verify-token", methods=["GET", "POST"])
+def verify_token():
+    """Simple token verification."""
+    # Support both GET (with Authorization header) and POST (with JSON body)
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        data = request.get_json(silent=True) or {}
+        token = data.get("token", "")
+    
+    if token:
+        return jsonify({"valid": True})
+    return jsonify({"valid": False}), 401
+
 
 @app.route("/api/detect", methods=["POST"])
 def detect_objects():
