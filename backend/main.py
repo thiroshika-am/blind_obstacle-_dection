@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from ai_modules.detector import get_detector
 from ai_modules.llm_alerts import get_alert_generator
 from ai_modules.ocr_engine import get_ocr_reader
+from ai_modules.face_recognition_engine import get_face_engine
 
 # ============================================
 # CONFIGURATION
@@ -415,6 +416,108 @@ def detect_text():
 # ============================================
 # BACKGROUND: Device Online Checker
 # ============================================
+
+
+# --- API: Face Recognition ---
+
+@app.route("/api/faces", methods=["GET"])
+def list_faces():
+    """List all known people."""
+    try:
+        engine = get_face_engine()
+        people = engine.list_people()
+        return jsonify({"people": people, "count": len(people)})
+    except Exception as e:
+        logger.error(f"Face list error: {e}")
+        return jsonify({"error": str(e), "people": []}), 500
+
+
+@app.route("/api/faces", methods=["POST"])
+def add_face():
+    """Add a new known person.
+    Expected JSON: { "name": "Person Name", "photo": "base64_image" }
+    """
+    try:
+        data = request.get_json(force=True)
+        name = data.get("name", "").strip()
+        photo = data.get("photo", "")
+
+        if not name:
+            return jsonify({"error": "Name is required"}), 400
+        if not photo:
+            return jsonify({"error": "Photo is required"}), 400
+
+        engine = get_face_engine()
+        result = engine.add_person(name, photo)
+
+        if result["success"]:
+            logger.info(f"Added person: {name} (ID: {result['person_id']})")
+            return jsonify(result)
+        else:
+            return jsonify(result), 400
+
+    except Exception as e:
+        logger.error(f"Face add error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/faces/<person_id>", methods=["DELETE"])
+def remove_face(person_id):
+    """Remove a known person."""
+    try:
+        engine = get_face_engine()
+        result = engine.remove_person(person_id)
+        if result["success"]:
+            logger.info(f"Removed person: {person_id}")
+            return jsonify(result)
+        else:
+            return jsonify(result), 404
+    except Exception as e:
+        logger.error(f"Face remove error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/faces/photo/<person_id>")
+def get_face_photo(person_id):
+    """Get the photo of a known person."""
+    try:
+        engine = get_face_engine()
+        photo_path = engine.get_photo_path(person_id)
+        if photo_path:
+            directory = os.path.dirname(photo_path)
+            filename = os.path.basename(photo_path)
+            return send_from_directory(directory, filename)
+        return jsonify({"error": "Photo not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/face-detect", methods=["POST"])
+def detect_faces():
+    """Detect and recognize faces in an image.
+    Expected JSON: { "image": "base64_image" }
+    """
+    try:
+        data = request.get_json(force=True)
+        image_b64 = data.get("image")
+
+        if not image_b64:
+            return jsonify({"error": "No image provided", "faces": []}), 400
+
+        engine = get_face_engine()
+        result = engine.detect_from_base64(image_b64)
+
+        known = [f for f in result.get("faces", []) if f.get("is_known")]
+        if known:
+            names = ", ".join(f["name"] for f in known)
+            logger.info(f"Recognized: {names}")
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f"Face detect error: {e}", exc_info=True)
+        return jsonify({"error": str(e), "faces": []}), 500
+
 
 def device_watchdog():
     """Marks device as offline if no heartbeat received in 30 seconds."""

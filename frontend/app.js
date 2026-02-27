@@ -92,6 +92,7 @@ const CONFIG = {
     DETECTION_HISTORY_MAX: 10,
     DETECTION_INTERVAL: 3000, // Increased from 100ms to 3 seconds - CPU processing takes time
     OCR_INTERVAL: 2000, // 2 seconds - fast OCR scan for immediate text reading
+    FACE_DETECT_INTERVAL: 4000, // 4 seconds - face recognition scan
 };
 
 const STATE = {
@@ -103,6 +104,8 @@ const STATE = {
     accuracyCircle: null,
     detectionTimer: null,
     ocrTimer: null, // OCR detection timer
+    faceDetectTimer: null, // Face recognition timer
+    isDetectingFaces: false, // Face detection in progress
     isDetecting: false,
     isReadingText: false, // OCR in progress
     lastDetections: [],
@@ -333,6 +336,9 @@ function startDetection() {
     
     // Start OCR detection (less frequent)
     startOCR();
+    
+    // Start face recognition
+    startFaceDetection();
 }
 
 function stopDetection() {
@@ -341,6 +347,7 @@ function stopDetection() {
         STATE.detectionTimer = null;
     }
     stopOCR();
+    stopFaceDetection();
     updateStatusLight('ai', false);
 }
 
@@ -359,6 +366,100 @@ function stopOCR() {
         clearInterval(STATE.ocrTimer);
         STATE.ocrTimer = null;
     }
+}
+
+// ============================================
+// FACE RECOGNITION DETECTION
+// ============================================
+
+function startFaceDetection() {
+    if (STATE.faceDetectTimer) return;
+    STATE.faceDetectTimer = setInterval(runFaceDetection, CONFIG.FACE_DETECT_INTERVAL);
+    console.log('[FACE] Face detection started');
+}
+
+function stopFaceDetection() {
+    if (STATE.faceDetectTimer) {
+        clearInterval(STATE.faceDetectTimer);
+        STATE.faceDetectTimer = null;
+    }
+}
+
+async function runFaceDetection() {
+    if (STATE.isDetectingFaces || !DOM.cameraFeed || !webcamStream || !webcamStream.active) {
+        return;
+    }
+
+    const video = DOM.cameraFeed;
+    if (video.readyState < 2) return;
+
+    STATE.isDetectingFaces = true;
+
+    try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, 640, 480);
+
+        const imageData = canvas.toDataURL('image/jpeg', 0.85);
+
+        const response = await fetch(`${CONFIG.API_BASE}/api/face-detect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: imageData })
+        });
+
+        if (!response.ok) {
+            console.warn('[FACE] API returned', response.status);
+            return;
+        }
+
+        const result = await response.json();
+        console.log(`[FACE] Detected ${result.count || 0} faces`, result.faces);
+
+        if (result.faces && result.faces.length > 0) {
+            const knownFaces = result.faces.filter(f => f.is_known);
+
+            // Update UI with recognized names
+            if (knownFaces.length > 0) {
+                displayRecognizedFaces(knownFaces);
+            }
+
+            // Announce new recognitions
+            result.faces.forEach(face => {
+                if (face.is_known && face.should_announce) {
+                    const msg = `${face.name} is here`;
+                    console.log(`[FACE] Announcing: ${msg} (confidence: ${face.confidence})`);
+                    enqueueSpeech(msg, 'obstacle', 'critical');
+                }
+            });
+        }
+    } catch (err) {
+        console.error('[FACE] Error:', err.message);
+    } finally {
+        STATE.isDetectingFaces = false;
+    }
+}
+
+function displayRecognizedFaces(knownFaces) {
+    const faceContent = document.getElementById('recognized-face-content');
+    if (!faceContent) return;
+
+    const names = knownFaces.map(f => {
+        const pct = Math.round((f.confidence || 0) * 100);
+        return `<span style="color: var(--primary); font-weight: 600;">${escapeHtml(f.name)}</span> <span style="color: var(--text-muted); font-size: 0.8rem;">(${pct}%)</span>`;
+    }).join(', ');
+
+    faceContent.innerHTML = names;
+    faceContent.classList.add('has-text');
+
+    // Auto-clear after 8 seconds if no new recognition
+    clearTimeout(faceContent._clearTimeout);
+    faceContent._clearTimeout = setTimeout(() => {
+        faceContent.innerHTML = '<span class="no-text">No face recognized</span>';
+        faceContent.classList.remove('has-text');
+    }, 8000);
 }
 
 async function runOCR() {
